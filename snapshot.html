@@ -1,0 +1,3369 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>二度关系风险图谱 - 离线快照版</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f7f8;
+        --panel: #ffffff;
+        --text: #172026;
+        --muted: #66737d;
+        --line: #d9e0e5;
+        --agent: #2f6fbb;
+        --agent-soft: #d9e8fb;
+        --borrower: #20866f;
+        --borrower-soft: #d9f0e9;
+        --risk: #d34c39;
+        --risk-soft: #fde3de;
+        --ink: #25313a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      .app-shell {
+        display: grid;
+        grid-template-columns: minmax(124px, 10vw) minmax(0, 1fr);
+        min-height: 100vh;
+        padding-left: 0;
+      }
+
+      .side-nav {
+        position: fixed;
+        inset: 0 auto 0 0;
+        width: max(124px, 10vw);
+        display: grid;
+        grid-auto-rows: max-content;
+        gap: 10px;
+        background: #fff;
+        border-right: 1px solid var(--line);
+        padding: 14px;
+        z-index: 3;
+      }
+
+      .side-brand {
+        display: grid;
+        gap: 2px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .side-brand strong {
+        color: var(--text);
+        font-size: 16px;
+      }
+
+      .side-brand span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .nav-button {
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--text);
+        border-radius: 6px;
+        padding: 10px 12px;
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .nav-button.active {
+        background: var(--ink);
+        color: #fff;
+        border-color: var(--ink);
+      }
+
+      .nav-collapse,
+      .nav-expand {
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        background: #f8fafb;
+        color: var(--muted);
+        border-radius: 50%;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        cursor: pointer;
+        line-height: 1;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .nav-collapse {
+        position: absolute;
+        right: 8px;
+        top: 8px;
+      }
+
+      .nav-expand {
+        position: fixed;
+        left: 12px;
+        top: 12px;
+        z-index: 4;
+        background: var(--ink);
+        color: #fff;
+        border-color: var(--ink);
+      }
+
+      .nav-expand[hidden] {
+        display: none;
+      }
+
+      .app-shell.nav-hidden {
+        grid-template-columns: minmax(0, 1fr);
+        padding-left: 0;
+      }
+
+      .app-shell.nav-hidden .side-nav {
+        display: none;
+      }
+
+      .workspace {
+        width: 100%;
+        max-width: none;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .view {
+        display: none;
+        grid-column: 2;
+      }
+
+      .view.active {
+        display: block;
+      }
+
+      .app-shell.nav-hidden .view {
+        grid-column: 1;
+      }
+
+      .app-shell.nav-hidden .workspace {
+        padding-left: 64px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 16px;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 28px;
+        line-height: 1.2;
+      }
+
+      h2 {
+        font-size: 16px;
+      }
+
+      .topbar p,
+      .panel-head p,
+      .notice {
+        color: var(--muted);
+        margin-top: 4px;
+      }
+
+      .upload-button,
+      .primary {
+        border: 0;
+        background: var(--ink);
+        color: #fff;
+        border-radius: 6px;
+        padding: 10px 16px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .upload-button input {
+        display: none;
+      }
+
+      .drop-zone {
+        display: grid;
+        place-items: center;
+        min-height: 112px;
+        border: 1px dashed #9dacb8;
+        border-radius: 8px;
+        background: #fff;
+        margin-bottom: 14px;
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+
+      .drop-zone.dragging {
+        border-color: var(--agent);
+        background: #eef6ff;
+      }
+
+      .drop-copy {
+        display: grid;
+        gap: 4px;
+        text-align: center;
+        color: var(--muted);
+        padding: 18px;
+      }
+
+      .drop-copy strong {
+        color: var(--text);
+        font-size: 16px;
+      }
+
+      .controls {
+        display: grid;
+        grid-template-columns: 180px 130px 130px 156px minmax(220px, 1fr) auto;
+        gap: 12px;
+        align-items: end;
+        margin-bottom: 14px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      select,
+      input {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fff;
+        color: var(--text);
+        min-height: 40px;
+        padding: 0 10px;
+      }
+
+      .segment {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        overflow: hidden;
+        background: #fff;
+        min-height: 40px;
+      }
+
+      .segment button {
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+        color: var(--muted);
+      }
+
+      .segment button.active {
+        background: var(--ink);
+        color: #fff;
+      }
+
+      .analysis-progress {
+        display: grid;
+        grid-template-columns: minmax(220px, auto) minmax(240px, 1fr);
+        gap: 14px;
+        align-items: center;
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-bottom: 14px;
+      }
+
+      .analysis-progress[hidden] {
+        display: none;
+      }
+
+      .progress-copy {
+        display: grid;
+        gap: 2px;
+      }
+
+      .progress-copy strong {
+        color: var(--text);
+        font-size: 14px;
+      }
+
+      .progress-copy span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .progress-track {
+        height: 9px;
+        overflow: hidden;
+        background: #e9eef2;
+        border-radius: 999px;
+      }
+
+      .progress-track span {
+        display: block;
+        width: 0%;
+        height: 100%;
+        background: linear-gradient(90deg, var(--borrower), var(--agent));
+        border-radius: inherit;
+        transition: width 0.22s ease;
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(120px, 1fr));
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .summary-card,
+      .graph-panel,
+      .metric-panel,
+      .tables article,
+      .notice-box {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .notice-box {
+        padding: 12px 14px;
+        margin-bottom: 14px;
+        color: var(--muted);
+      }
+
+      .summary-card {
+        padding: 12px;
+      }
+
+      .summary-card span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .summary-card strong {
+        display: block;
+        font-size: 22px;
+        line-height: 1.25;
+        margin-top: 4px;
+      }
+
+      .summary-card.warning {
+        background: var(--risk-soft);
+        border-color: #f3b9ae;
+      }
+
+      .graph-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+
+      .graph-panel {
+        min-height: 620px;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+
+      .panel-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 16px 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .legend {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+        flex-wrap: wrap;
+      }
+
+      .legend i {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 5px;
+      }
+
+      .legend-toggle {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--muted);
+        border-radius: 999px;
+        padding: 4px 7px;
+        cursor: pointer;
+      }
+
+      .legend-toggle.is-off {
+        opacity: 0.38;
+        border-color: var(--line);
+        text-decoration: line-through;
+      }
+
+      .agent-dot {
+        background: var(--agent);
+      }
+
+      .borrower-dot {
+        background: var(--borrower);
+      }
+
+      .overdue-dot {
+        background: var(--risk);
+      }
+
+      .device-dot {
+        background: #8b5bb5;
+      }
+
+      .ip-dot {
+        background: #c78325;
+      }
+
+      .address-dot {
+        background: #596b78;
+      }
+
+      .graph-canvas {
+        min-height: 560px;
+        overflow: hidden;
+        touch-action: none;
+      }
+
+      .graph-canvas svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+        cursor: grab;
+      }
+
+      .graph-canvas svg.is-panning {
+        cursor: grabbing;
+      }
+
+      .graph-node {
+        cursor: pointer;
+        transition: opacity 0.15s ease;
+      }
+
+      .graph-edge {
+        transition: opacity 0.15s ease, stroke-width 0.15s ease;
+      }
+
+      .graph-node.is-muted,
+      .graph-edge.is-muted {
+        opacity: 0.12;
+      }
+
+      .graph-node.is-highlighted {
+        opacity: 1;
+      }
+
+      .graph-edge.is-highlighted {
+        opacity: 1;
+        stroke-width: 3;
+      }
+
+      .graph-label {
+        font-size: 12px;
+        fill: #23313b;
+        paint-order: stroke;
+        stroke: #fff;
+        stroke-width: 4px;
+        stroke-linejoin: round;
+      }
+
+      .metric-panel {
+        padding: 16px;
+      }
+
+      .metric-list {
+        display: grid;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .metric-item {
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 9px;
+      }
+
+      .metric-item span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .metric-item strong {
+        display: block;
+        font-size: 18px;
+      }
+
+      .empty {
+        color: var(--muted);
+        padding: 18px;
+      }
+
+      .search-results {
+        display: grid;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .search-hit {
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 6px;
+        padding: 8px 10px;
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .tables {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr 1fr;
+        gap: 14px;
+      }
+
+      .tables article {
+        padding: 16px;
+        min-width: 0;
+      }
+
+      .feature-section {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        margin-top: 14px;
+        padding: 16px;
+      }
+
+      .feature-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 12px;
+      }
+
+      .feature-head p {
+        color: var(--muted);
+        margin-top: 4px;
+      }
+
+      .feature-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .secondary {
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--text);
+        border-radius: 6px;
+        padding: 9px 12px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .feature-table {
+        max-height: 480px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+
+      .feature-table table {
+        min-width: 1800px;
+      }
+
+      .feature-table thead th {
+        position: sticky;
+        top: 0;
+        background: #fff;
+        z-index: 1;
+      }
+
+      .table {
+        margin-top: 12px;
+        overflow: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 520px;
+      }
+
+      th,
+      td {
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+        padding: 8px 6px;
+        white-space: nowrap;
+      }
+
+      th {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      tbody tr {
+        cursor: pointer;
+      }
+
+      tbody tr:hover {
+        background: #f2f6f8;
+      }
+
+      .toast {
+        position: fixed;
+        right: 20px;
+        bottom: 20px;
+        max-width: min(420px, calc(100vw - 40px));
+        background: #172026;
+        color: #fff;
+        border-radius: 8px;
+        padding: 12px 14px;
+        box-shadow: 0 14px 34px rgba(23, 32, 38, 0.25);
+        z-index: 2;
+      }
+
+      .guide-view {
+        max-width: 1100px;
+      }
+
+      .guide-section,
+      .guide-grid {
+        margin-top: 16px;
+      }
+
+      .guide-section {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 16px;
+      }
+
+      .guide-section p,
+      .guide-card p {
+        color: var(--muted);
+      }
+
+      .guide-section ul {
+        margin: 12px 0 0;
+        padding-left: 18px;
+        color: var(--text);
+      }
+
+      .guide-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .guide-card {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 16px;
+      }
+
+      .guide-card dl {
+        display: grid;
+        grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+        gap: 8px 12px;
+        margin: 12px 0 0;
+      }
+
+      .guide-card dt {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .guide-card dd {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      @media (max-width: 980px) {
+        .app-shell {
+          grid-template-columns: 1fr;
+          padding-left: 0;
+        }
+
+        .side-nav {
+          position: static;
+          width: auto;
+          grid-template-columns: 1fr 1fr;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          padding: 12px 16px;
+        }
+
+        .side-brand {
+          grid-column: 1 / -1;
+        }
+
+        .nav-collapse,
+        .nav-expand {
+          display: none;
+        }
+
+        .workspace {
+          padding: 16px;
+        }
+
+        .view {
+          grid-column: 1;
+        }
+
+        .topbar,
+        .panel-head {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .controls,
+        .graph-layout,
+        .tables,
+        .analysis-progress,
+        .summary-grid,
+        .guide-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .graph-panel {
+          min-height: 520px;
+        }
+
+        .graph-canvas {
+          min-height: 460px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="side-nav" aria-label="页面导航">
+        <div class="side-brand">
+          <strong>风控图谱</strong>
+          <span>ANTI-FRAUD</span>
+        </div>
+        <button id="navToggle" class="nav-collapse" type="button" aria-label="隐藏导航">-</button>
+        <button class="nav-button active" type="button" data-view="graphView">图谱分析</button>
+        <button class="nav-button" type="button" data-view="featureGuide">特征说明</button>
+      </aside>
+      <button id="navExpand" class="nav-expand" type="button" aria-label="显示导航" hidden>+</button>
+
+      <section id="graphView" class="workspace view active">
+        <header class="topbar">
+          <div>
+            <h1>多关系反欺诈图谱分析</h1>
+            <p>上传贷款明细，基于用户、中介、设备、IP、地址簇构建关系网络，识别疑似团伙并生成策略特征宽表。</p>
+          </div>
+          <label class="upload-button">
+            <input id="fileInput" type="file" accept=".csv,.xlsx" />
+            上传 CSV / XLSX
+          </label>
+        </header>
+
+        <section class="notice-box">
+          支持 CSV 和常见 `.xlsx` 文件。`.xlsx` 解析依赖浏览器的本地解压能力，建议使用最新版 Chrome、Edge 或 Safari。旧版 `.xls` 请另存为 `.xlsx` 或 CSV。
+        </section>
+
+        <section id="dropZone" class="drop-zone">
+          <div class="drop-copy">
+            <strong>拖入文件开始分析</strong>
+            <span>字段需包含用户、收货手机号、设备、IP、地址簇、借款结果和逾期指标；支持首复贷、退货筛选。</span>
+          </div>
+        </section>
+
+        <section class="controls">
+          <label>
+            逾期口径
+            <select id="overdueBasis">
+              <option value="any">任一 fpd/cpd 逾期</option>
+              <option value="fpd1">fpd1</option>
+              <option value="fpd3">fpd3</option>
+              <option value="fpd7">fpd7</option>
+              <option value="fpd10">fpd10</option>
+              <option value="fpd30">fpd30</option>
+              <option value="cpd1">cpd1</option>
+              <option value="cpd7">cpd7</option>
+              <option value="cpd10">cpd10</option>
+              <option value="cpd30">cpd30</option>
+              <option value="spd10">spd10</option>
+              <option value="spd30">spd30</option>
+              <option value="tpd10">tpd10</option>
+              <option value="tpd30">tpd30</option>
+            </select>
+          </label>
+          <label>
+            社区算法
+            <select id="communityMethod">
+              <option value="connected_components">连通分量</option>
+              <option value="louvain">Louvain</option>
+              <option value="leiden">Leiden</option>
+            </select>
+          </label>
+          <label>
+            首复贷
+            <select id="reloanFilter">
+              <option value="all">全部</option>
+            </select>
+          </label>
+          <label>
+            是否退货
+            <select id="returnFilter">
+              <option value="all">全部</option>
+              <option value="0">未退货 / 0</option>
+              <option value="1">已退货 / 1</option>
+            </select>
+          </label>
+          <div class="segment" role="group" aria-label="中心节点类型">
+            <button id="borrowerMode" class="active" type="button">借款人</button>
+            <button id="agentMode" type="button">中介</button>
+          </div>
+          <label class="search-label">
+            中心节点
+            <input id="centerInput" type="search" placeholder="输入 app_user_id 或收货人手机号后回车" autocomplete="off" />
+          </label>
+          <button id="queryButton" class="primary" type="button">查询图谱</button>
+        </section>
+
+        <section id="analysisProgress" class="analysis-progress" aria-live="polite" hidden>
+          <div class="progress-copy">
+            <strong id="progressTitle">准备分析</strong>
+            <span id="progressText">等待任务开始</span>
+          </div>
+          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <span id="progressBar"></span>
+          </div>
+        </section>
+
+        <section id="summaryCards" class="summary-grid"></section>
+
+        <section class="graph-layout">
+          <div class="graph-panel">
+            <div class="panel-head">
+              <div>
+                <h2>关系图谱</h2>
+                <p id="graphSubtitle">等待上传数据</p>
+              </div>
+              <div class="legend">
+                <span><i class="agent-dot"></i>中介</span>
+                <span><i class="borrower-dot"></i>借款人</span>
+                <span><i class="device-dot"></i>设备</span>
+                <span><i class="ip-dot"></i>IP</span>
+                <span><i class="address-dot"></i>地址簇</span>
+                <span><i class="overdue-dot"></i>有逾期</span>
+              </div>
+            </div>
+            <div id="graphCanvas" class="graph-canvas"></div>
+          </div>
+
+          <aside class="metric-panel">
+            <h2>中心指标</h2>
+            <div id="centerMetrics" class="metric-list empty">暂无数据</div>
+            <div id="searchResults" class="search-results"></div>
+          </aside>
+        </section>
+
+        <section class="tables">
+          <article>
+            <h2>疑似中介团伙 Top</h2>
+            <div id="communityTable" class="table"></div>
+          </article>
+          <article>
+            <h2>二度中介数 Top</h2>
+            <div id="agentTable" class="table"></div>
+          </article>
+          <article>
+            <h2>二度借款逾期率 Top</h2>
+            <div id="borrowerTable" class="table"></div>
+          </article>
+        </section>
+
+        <section class="feature-section">
+          <div class="feature-head">
+            <div>
+              <h2>策略特征宽表</h2>
+              <p id="featureSubtitle">上传数据后生成原始字段 + 加工特征</p>
+            </div>
+            <div class="feature-actions">
+              <button id="exportCsvButton" class="secondary" type="button">导出 CSV</button>
+              <button id="exportExcelButton" class="secondary" type="button">导出 Excel</button>
+            </div>
+          </div>
+          <div id="featureTable" class="feature-table empty">暂无数据</div>
+        </section>
+      </section>
+
+      <section id="featureGuide" class="workspace view guide-view" hidden>
+        <header class="topbar">
+          <div>
+            <h1>特征说明</h1>
+            <p>策略特征宽表中新加工字段的计算口径。</p>
+          </div>
+        </header>
+
+        <section class="guide-section">
+          <h2>通用口径</h2>
+          <p>以下说明以宽表当前行为准：U 为当前行 app_user_id，A 为当前行 consigneeMobileId，C 为 addr_cluster_id，D 为 device_id，P 为 ip。</p>
+          <ul>
+            <li>申请笔数类字段统计筛选后的全量申请行。</li>
+            <li>贷款笔数和坏账率类字段只统计 final_result=30 的通过样本。</li>
+            <li>坏账率 = 通过样本中逾期笔数 / 通过样本总笔数。</li>
+            <li>关联人数、关联设备数、关联 IP 数、关联地址簇数均为去重计数。</li>
+          </ul>
+        </section>
+
+        <section class="guide-grid">
+          <article class="guide-card">
+            <h2>实体维度</h2>
+            <dl>
+              <dt>收货人手机号关联人数/设备数/ip数/地址簇数</dt><dd>A 关联过的用户、设备、IP、地址簇去重数量。</dd>
+              <dt>收货人手机号坏账率</dt><dd>A 关联记录中通过且逾期的笔数 / A 关联记录中通过笔数。</dd>
+              <dt>地址簇相关字段</dt><dd>以 C 聚合，统计去重地址、用户、中介、设备、IP、申请笔数和坏账率。</dd>
+              <dt>设备相关字段</dt><dd>以 D 聚合，统计去重用户、地址簇、中介、申请笔数和坏账率。</dd>
+              <dt>IP相关字段</dt><dd>以 P 聚合，统计去重用户、设备、申请笔数和坏账率。</dd>
+              <dt>借款人一度中介数/贷款笔数/坏账率</dt><dd>以 U 聚合，统计直接中介数、通过贷款笔数和通过样本坏账率。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>二度关系</h2>
+            <dl>
+              <dt>二度借款人数</dt><dd>U 的一度中介关联过的其他 app_user_id 去重数，去掉 U 自己。</dd>
+              <dt>二度中介数</dt><dd>A 的一度借款人关联过的其他 consigneeMobileId 去重数，去掉 A 自己。</dd>
+              <dt>二度设备数/ip数/地址簇数</dt><dd>U 的二度借款人集合下所有记录中的设备、IP、地址簇去重数。</dd>
+              <dt>二度申请人数/申请笔数</dt><dd>U 的二度借款人集合中有申请记录的去重人数，以及对应全量申请行数。</dd>
+              <dt>二度贷款笔数/坏账率</dt><dd>U 的二度借款人集合中 final_result=30 的笔数，以及其中逾期笔数占比。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>共享用户中介投影</h2>
+            <p>两个中介共享同一个 app_user_id 时连边，边权就是这两个中介共享的去重借款人数。</p>
+            <dl>
+              <dt>节点度数(共享用户)</dt><dd>A 直接连接的其他中介数量。</dd>
+              <dt>加权度数(共享用户)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联的去重 app_user_id 数。</dd>
+              <dt>PageRank分数(共享用户)</dt><dd>A 在共享用户中介投影图上的 PageRank。</dd>
+              <dt>中介中心性(共享用户)</dt><dd>A 在共享用户中介投影图上的介数中心性，衡量它是否位于其他中介之间的最短路径上。</dd>
+              <dt>连通子图大小/社区id(共享用户)</dt><dd>A 所在共享用户连通分量的中介数量和 ID。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>连通分量关系图</h2>
+            <p>两个中介通过共享用户、设备、IP、地址簇计算关系；首复贷选择不同，连边阈值不同。</p>
+            <dl>
+              <dt>仅首贷或复贷</dt><dd>共享Device >= 1，或共享User >= 1，或共享IP >= 2 且 IP人数 <= 20，或共享Addr >= 1。</dd>
+              <dt>全部数据</dt><dd>共享Device >= 1，或共享User >= 2，或共享IP >= 2 且 IP人数 <= 50，或共享Addr >= 1。</dd>
+              <dt>节点度数(连通分量关系)</dt><dd>A 在过滤后关系图上直接连接的其他中介数量。</dd>
+              <dt>加权度数(连通分量关系)</dt><dd>A 连到的每一条边权相加，边权 = 共享User*1.0 + 共享Device*1.2 + 共享IP*0.8 + 共享Addr*1.0。</dd>
+              <dt>PageRank分数/中介中心性(连通分量关系)</dt><dd>A 在过滤后关系图上的 PageRank 和介数中心性。</dd>
+              <dt>连通子图大小/社区id(连通分量关系)</dt><dd>A 所在过滤后中介连通分量的规模和 ID。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>单类关系中介投影</h2>
+            <dl>
+              <dt>节点度数(共享设备)</dt><dd>A 在共享设备图上直接连接的其他中介数量。</dd>
+              <dt>加权度数(共享设备)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人使用过的去重 device_id 数。</dd>
+              <dt>节点度数(共享IP)</dt><dd>A 在共享 IP 图上直接连接的其他中介数量。</dd>
+              <dt>加权度数(共享IP)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人使用过的去重 ip 数。</dd>
+              <dt>节点度数(共享地址簇)</dt><dd>A 在共享地址簇图上直接连接的其他中介数量。</dd>
+              <dt>加权度数(共享地址簇)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人出现过的去重 addr_cluster_id 数。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>多关系中介投影</h2>
+            <p>多关系边权 = 1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</p>
+            <dl>
+              <dt>节点度数(多关系)</dt><dd>A 在多关系图上直接连接的其他中介数量。</dd>
+              <dt>加权度数(多关系)</dt><dd>A 连到的每一条边权相加，边权 = 1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
+              <dt>PageRank分数(多关系)</dt><dd>A 在多关系图上的 PageRank。</dd>
+              <dt>中介中心性(多关系)</dt><dd>A 在多关系图上的介数中心性。</dd>
+              <dt>连通子图大小/社区id(多关系)</dt><dd>A 所在多关系连通分量的中介数量和 ID。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>边权与 PageRank</h2>
+            <dl>
+              <dt>Agent 多关系边权</dt><dd>1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
+              <dt>User 同构图边权</dt><dd>1.0 * 共享中介数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
+              <dt>PageRank 公式</dt><dd>PR(v) = (1-d)/N + d*Dangling/N + d*Σ PR(u)*w(u,v)/Σw(u,x)，d=0.85，迭代 40 轮。</dd>
+              <dt>符号说明</dt><dd>N 为节点数，w 为边权，Dangling 为无出边节点 PageRank 之和。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>社区特征</h2>
+            <p>连通分量时社区为过滤后关系图中的中介连通分量；Louvain / Leiden 时通用社区字段仍为用户同构图社区，宽表会额外生成未过滤 Agent-Agent 多关系图社区字段。</p>
+            <dl>
+              <dt>社区id/社区规模</dt><dd>当前行命中的社区 ID；连通分量下规模为中介数，Louvain / Leiden 下规模为用户数。</dd>
+              <dt>社区借款人数/贷款笔数/坏账率</dt><dd>社区覆盖用户数、通过贷款笔数和通过样本坏账率。</dd>
+              <dt>社区设备/ip/地址密度</dt><dd>社区内部节点两两共享对应属性形成的边数 / 理论最大边数。</dd>
+              <dt>社区共享借款人数</dt><dd>连通分量口径下，社区内被至少两个中介共享的借款人数；用户社区口径下当前为 0。</dd>
+              <dt>社区风险分</dt><dd>由坏账率、网络密度、设备/IP/地址密度等组合得到的解释性排序分。</dd>
+              <dt>...(Agent)</dt><dd>选择 Louvain / Leiden 时，基于未过滤 Agent-Agent 多关系图同步生成的中介社区字段。</dd>
+              <dt>Agent 风险分</dt><dd>min(100, round(坏账率*55 + 网络密度*20 + min(共享借款人占比,1)*15 + min(中介数/10,1)*10, 2))。</dd>
+              <dt>User 风险分</dt><dd>min(100, round(坏账率*55 + 用户网络密度*15 + 设备密度*10 + IP密度*10 + 地址密度*10, 2))。</dd>
+            </dl>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const REQUIRED_COLUMNS = new Set([
+        "loan_task_id",
+        "apply_time",
+        "final_result",
+        "reloan_flag",
+        "return_flag",
+        "app_key",
+        "app_user_id",
+        "consigneeMobileId",
+        "ip",
+        "device_id",
+        "receiverAddr",
+        "addr_cluster_id",
+        "fpd1",
+        "fpd3",
+        "fpd10",
+        "fpd30",
+        "cpd1",
+        "cpd7",
+        "cpd10",
+        "cpd30",
+        "spd10",
+        "spd30",
+        "tpd10",
+        "tpd30",
+      ]);
+      const OVERDUE_FIELDS = ["fpd1", "fpd3", "fpd7", "fpd10", "fpd30", "cpd1", "cpd7", "cpd10", "cpd30", "spd10", "spd30", "tpd10", "tpd30"];
+      const AGENT_COL = "收货人手机号";
+      const BORROWER_COL = "借款人手机号";
+      const ADDRESS_COL = "收货人地址";
+      const ADDR_CLUSTER_COL = "addr_clusterid";
+      const DEVICE_COL = "设备号";
+      const IP_COL = "ip";
+      const RELOAN_COL = "reloan_flag";
+      const RETURN_COL = "return_flag";
+      const FINAL_RESULT_COL = "final_result";
+      const FUNDED_RESULT = "30";
+      const FIELD_ALIASES = {
+        [AGENT_COL]: [AGENT_COL, "consigneeMobileId"],
+        [BORROWER_COL]: [BORROWER_COL, "app_user_id"],
+        [ADDRESS_COL]: [ADDRESS_COL, "receiverAddr", "consigneeAddr"],
+        [ADDR_CLUSTER_COL]: [ADDR_CLUSTER_COL, "addr_cluster_id"],
+        [DEVICE_COL]: [DEVICE_COL, "device_id"],
+        [IP_COL]: [IP_COL],
+        [RELOAN_COL]: [RELOAN_COL],
+        [RETURN_COL]: [RETURN_COL],
+        [FINAL_RESULT_COL]: [FINAL_RESULT_COL],
+      };
+
+      const state = {
+        graph: null,
+        centerType: "borrower",
+        centerId: "",
+        overdueBasis: "any",
+        communityMethod: "connected_components",
+        reloanFilter: "all",
+        returnFilter: "all",
+        lastRows: null,
+        lastFileName: "",
+        currentGraph: null,
+        featureTable: { columns: [], rows: [] },
+      };
+      const graphHiddenTypes = new Set();
+
+      const fileInput = document.querySelector("#fileInput");
+      const dropZone = document.querySelector("#dropZone");
+      const overdueBasis = document.querySelector("#overdueBasis");
+      const communityMethod = document.querySelector("#communityMethod");
+      const reloanFilter = document.querySelector("#reloanFilter");
+      const returnFilter = document.querySelector("#returnFilter");
+      const borrowerMode = document.querySelector("#borrowerMode");
+      const agentMode = document.querySelector("#agentMode");
+      const centerInput = document.querySelector("#centerInput");
+      const queryButton = document.querySelector("#queryButton");
+      const exportCsvButton = document.querySelector("#exportCsvButton");
+      const exportExcelButton = document.querySelector("#exportExcelButton");
+      const analysisProgress = document.querySelector("#analysisProgress");
+      const progressTitle = document.querySelector("#progressTitle");
+      const progressText = document.querySelector("#progressText");
+      const progressBar = document.querySelector("#progressBar");
+      const navButtons = document.querySelectorAll(".nav-button");
+      const views = document.querySelectorAll(".view");
+      const appShell = document.querySelector(".app-shell");
+      const navToggle = document.querySelector("#navToggle");
+      const navExpand = document.querySelector("#navExpand");
+      let progressHideTimer = 0;
+
+      navButtons.forEach((button) => {
+        button.addEventListener("click", () => switchView(button.dataset.view));
+      });
+      navToggle?.addEventListener("click", () => setNavHidden(true));
+      navExpand?.addEventListener("click", () => setNavHidden(false));
+
+      fileInput.addEventListener("change", () => {
+        if (fileInput.files[0]) analyzeFile(fileInput.files[0]);
+      });
+
+      dropZone.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        dropZone.classList.add("dragging");
+      });
+
+      dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragging"));
+
+      dropZone.addEventListener("drop", (event) => {
+        event.preventDefault();
+        dropZone.classList.remove("dragging");
+        if (event.dataTransfer.files[0]) analyzeFile(event.dataTransfer.files[0]);
+      });
+
+      overdueBasis.addEventListener("change", () => {
+        state.overdueBasis = overdueBasis.value;
+        if (state.lastRows) void analyzeRows(state.lastRows);
+      });
+
+      communityMethod?.addEventListener("change", () => {
+        state.communityMethod = communityMethod.value;
+        if (state.lastRows) void analyzeRows(state.lastRows);
+      });
+
+      reloanFilter?.addEventListener("change", () => {
+        state.reloanFilter = reloanFilter.value;
+        if (state.lastRows) void analyzeRows(state.lastRows);
+      });
+
+      returnFilter?.addEventListener("change", () => {
+        state.returnFilter = returnFilter.value;
+        if (state.lastRows) void analyzeRows(state.lastRows);
+      });
+
+      borrowerMode.addEventListener("click", () => setCenterType("borrower"));
+      agentMode.addEventListener("click", () => setCenterType("agent"));
+      queryButton.addEventListener("click", queryGraph);
+      centerInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") queryGraph();
+      });
+      centerInput.addEventListener("input", debounce(searchCenters, 240));
+      exportCsvButton?.addEventListener("click", () => exportFeatureTable("csv"));
+      exportExcelButton?.addEventListener("click", () => exportFeatureTable("xls"));
+
+      async function analyzeFile(file) {
+        showProgress(6, "读取文件", "正在解析本地 CSV / Excel");
+        showToast("正在读取文件...");
+        try {
+          const rows = await parseUploadedFile(file);
+          if (state.lastFileName && state.lastFileName !== file.name) {
+            state.reloanFilter = "all";
+            if (reloanFilter) reloanFilter.value = "all";
+          }
+          state.lastFileName = file.name;
+          state.lastRows = rows;
+          updateReLoanOptions(extractFilterValues(rows, RELOAN_COL));
+          await analyzeRows(rows);
+          showToast("分析完成");
+        } catch (error) {
+          hideProgress();
+          showToast(error.message || String(error));
+        }
+      }
+
+      async function analyzeRows(rows) {
+        try {
+          showProgress(12, "筛选数据", "正在应用逾期口径、首复贷和退货筛选");
+          await nextFrame();
+          const graph = new RiskGraph(filterRows(rows, state.reloanFilter, state.returnFilter), state.overdueBasis, state.reloanFilter);
+          state.graph = graph;
+          showProgress(30, "选择中心节点", "正在计算默认中心和基础指标");
+          await nextFrame();
+          const [centerType, centerId] = graph.defaultCenter(state.overdueBasis);
+          state.centerType = centerType;
+          state.centerId = centerId;
+          setCenterType(centerType);
+          centerInput.value = centerId;
+          const summary = graph.summary(state.overdueBasis, state.communityMethod);
+          summary.uploaded_row_count = rows.length;
+          summary.analyzed_row_count = graph.rows.length;
+          renderSummary(summary);
+          showProgress(50, "识别社区", "正在计算团伙/社区与 Top 列表");
+          await nextFrame();
+          renderCommunityTable(graph.communities(state.communityMethod, state.overdueBasis));
+          renderAgentTable(graph.topAgents());
+          renderBorrowerTable(graph.topBorrowers(state.overdueBasis));
+          showProgress(72, "生成宽表", "正在加工导出特征");
+          await nextFrame();
+          state.featureTable = graph.featureTable(state.overdueBasis, state.communityMethod);
+          renderFeatureTable(state.featureTable);
+          showProgress(90, "渲染图谱", "正在刷新关系图和中心指标");
+          await nextFrame();
+          const graphData = graph.graph(centerType, centerId, state.overdueBasis);
+          renderGraph(graphData);
+          renderMetrics(graphData);
+          completeProgress("分析完成");
+        } catch (error) {
+          hideProgress();
+          showToast(error.message || String(error));
+        }
+      }
+
+      function queryGraph() {
+        if (!state.graph) {
+          showToast("请先上传数据文件");
+          return;
+        }
+        const centerId = normalizePhone(centerInput.value);
+        if (!centerId) {
+          showToast("请输入中心节点");
+          return;
+        }
+        state.centerId = centerId;
+        const result = state.graph.graph(state.centerType, centerId, state.overdueBasis);
+        renderGraph(result);
+        renderMetrics(result);
+      }
+
+      function searchCenters() {
+        if (!state.graph) return;
+        const query = centerInput.value.trim();
+        const container = document.querySelector("#searchResults");
+        if (!query) {
+          container.innerHTML = "";
+          return;
+        }
+        const response = state.graph.search(query);
+        const hits = [...response.borrowers, ...response.agents].slice(0, 8);
+        container.innerHTML = hits.map((hit) => `
+          <button class="search-hit" type="button" data-type="${hit.type}" data-id="${hit.id}">
+            ${hit.type === "agent" ? "中介" : "借款人"} ${escapeHtml(hit.label)}
+          </button>
+        `).join("");
+        container.querySelectorAll("button").forEach((button) => {
+          button.addEventListener("click", () => {
+            setCenterType(button.dataset.type);
+            centerInput.value = button.dataset.id;
+            queryGraph();
+          });
+        });
+      }
+
+      function setCenterType(type) {
+        state.centerType = type;
+        borrowerMode.classList.toggle("active", type === "borrower");
+        agentMode.classList.toggle("active", type === "agent");
+      }
+
+      function switchView(viewId) {
+        navButtons.forEach((button) => button.classList.toggle("active", button.dataset.view === viewId));
+        views.forEach((view) => {
+          const isActive = view.id === viewId;
+          view.classList.toggle("active", isActive);
+          view.hidden = !isActive;
+        });
+      }
+
+      switchView("graphView");
+
+      function setNavHidden(hidden) {
+        appShell?.classList.toggle("nav-hidden", hidden);
+        if (navExpand) navExpand.hidden = !hidden;
+      }
+
+      class RiskGraph {
+        constructor(rows, overdueBasis = "any", reloanFilter = "all") {
+          this.rows = rows;
+          this.overdueBasis = overdueBasis;
+          this.reloanFilter = normalizeValue(reloanFilter || "all");
+          this.agentToBorrowers = new Map();
+          this.borrowerToAgents = new Map();
+          this.loansByBorrower = new Map();
+          this.loanRows = [];
+          this.skippedRows = 0;
+          this.sourceColumns = rows[0] ? Object.keys(rows[0]) : [];
+          this.columns = [...new Set(rows.flatMap((row) => Object.keys(row)))].sort();
+          this.build();
+        }
+
+        build() {
+          for (const row of this.rows) {
+            const aliasedRow = applyAliases(row);
+            const agentId = normalizePhone(getField(aliasedRow, AGENT_COL));
+            const borrowerId = normalizePhone(getField(aliasedRow, BORROWER_COL));
+            if (!agentId || !borrowerId) {
+              this.skippedRows += 1;
+              continue;
+            }
+            const cleanRow = {
+              ...aliasedRow,
+              [AGENT_COL]: agentId,
+              [BORROWER_COL]: borrowerId,
+              [DEVICE_COL]: normalizeValue(getField(aliasedRow, DEVICE_COL)),
+              [IP_COL]: normalizeValue(getField(aliasedRow, IP_COL)),
+              [ADDRESS_COL]: normalizeValue(getField(aliasedRow, ADDRESS_COL)),
+              [ADDR_CLUSTER_COL]: normalizeValue(getField(aliasedRow, ADDR_CLUSTER_COL)),
+              [RELOAN_COL]: normalizeValue(getField(aliasedRow, RELOAN_COL)),
+              [RETURN_COL]: normalizeValue(getField(aliasedRow, RETURN_COL)),
+            };
+            addToSetMap(this.agentToBorrowers, agentId, borrowerId);
+            addToSetMap(this.borrowerToAgents, borrowerId, agentId);
+            addToListMap(this.loansByBorrower, borrowerId, cleanRow);
+            this.loanRows.push(cleanRow);
+          }
+        }
+
+        distinctFromLoans(loans, column) {
+          return new Set(loans.map((loan) => normalizeValue(loan[column])).filter(Boolean));
+        }
+
+        badRate(loans, basis = this.overdueBasis) {
+          const funded = this.fundedLoans(loans);
+          return funded.length ? funded.filter((loan) => this.isOverdue(loan, basis)).length / funded.length : 0;
+        }
+
+        isFunded(loan) {
+          return normalizeValue(loan[FINAL_RESULT_COL]) === FUNDED_RESULT;
+        }
+
+        fundedLoans(loans) {
+          return loans.filter((loan) => this.isFunded(loan));
+        }
+
+        loansForBorrowers(borrowers) {
+          const loans = [];
+          for (const borrowerId of borrowers) loans.push(...(this.loansByBorrower.get(borrowerId) || []));
+          return loans;
+        }
+
+        firstDegreeBorrowers(agentId) {
+          return new Set(this.agentToBorrowers.get(agentId) || []);
+        }
+
+        firstDegreeAgents(borrowerId) {
+          return new Set(this.borrowerToAgents.get(borrowerId) || []);
+        }
+
+        secondDegreeAgents(agentId) {
+          const result = new Set();
+          for (const borrowerId of this.firstDegreeBorrowers(agentId)) {
+            for (const item of this.borrowerToAgents.get(borrowerId) || []) result.add(item);
+          }
+          result.delete(agentId);
+          return result;
+        }
+
+        secondDegreeBorrowers(borrowerId) {
+          const result = new Set();
+          for (const agentId of this.firstDegreeAgents(borrowerId)) {
+            for (const item of this.agentToBorrowers.get(agentId) || []) result.add(item);
+          }
+          result.delete(borrowerId);
+          return result;
+        }
+
+        isOverdue(loan, basis = this.overdueBasis) {
+          if (basis === "any") return OVERDUE_FIELDS.some((name) => asBoolish(loan[name]));
+          return asBoolish(loan[OVERDUE_FIELDS.includes(basis) ? basis : "fpd1"]);
+        }
+
+        secondDegreeOverdueRate(borrowerId, basis = this.overdueBasis) {
+          const borrowers = this.secondDegreeBorrowers(borrowerId);
+          let loans = [];
+          for (const item of borrowers) loans.push(...(this.loansByBorrower.get(item) || []));
+          loans = this.fundedLoans(loans);
+          const total = loans.length;
+          const overdue = loans.filter((loan) => this.isOverdue(loan, basis)).length;
+          return {
+            second_degree_borrowers: borrowers.size,
+            second_degree_loans: total,
+            second_degree_overdue_loans: overdue,
+            second_degree_overdue_rate: total ? overdue / total : 0,
+          };
+        }
+
+        agentMetrics(agentId) {
+          return {
+            agent_id: agentId,
+            label: mask(agentId),
+            first_degree_borrowers: this.firstDegreeBorrowers(agentId).size,
+            second_degree_agents: this.secondDegreeAgents(agentId).size,
+          };
+        }
+
+        borrowerMetrics(borrowerId, basis = this.overdueBasis) {
+          const ownLoans = this.fundedLoans(this.loansByBorrower.get(borrowerId) || []);
+          const ownOverdue = ownLoans.filter((loan) => this.isOverdue(loan, basis)).length;
+          return {
+            borrower_id: borrowerId,
+            label: mask(borrowerId),
+            first_degree_agents: this.firstDegreeAgents(borrowerId).size,
+            loan_count: ownLoans.length,
+            own_overdue_loans: ownOverdue,
+            ...this.secondDegreeOverdueRate(borrowerId, basis),
+          };
+        }
+
+        topAgents(limit = 20) {
+          return [...this.agentToBorrowers.keys()]
+            .map((id) => this.agentMetrics(id))
+            .sort((a, b) => (b.second_degree_agents - a.second_degree_agents) || (b.first_degree_borrowers - a.first_degree_borrowers))
+            .slice(0, limit);
+        }
+
+        topBorrowers(basis = this.overdueBasis, limit = 20) {
+          return [...this.borrowerToAgents.keys()]
+            .map((id) => this.borrowerMetrics(id, basis))
+            .sort((a, b) => (
+              b.second_degree_overdue_rate - a.second_degree_overdue_rate ||
+              b.second_degree_borrowers - a.second_degree_borrowers ||
+              b.second_degree_loans - a.second_degree_loans
+            ))
+            .slice(0, limit);
+        }
+
+        agentProjection(minSharedBorrowers = 1) {
+          const rawEdges = new Map();
+          for (const agentsSet of this.borrowerToAgents.values()) {
+            const agents = [...agentsSet].sort();
+            for (let leftIndex = 0; leftIndex < agents.length; leftIndex += 1) {
+              for (let rightIndex = leftIndex + 1; rightIndex < agents.length; rightIndex += 1) {
+                const key = `${agents[leftIndex]}|${agents[rightIndex]}`;
+                rawEdges.set(key, (rawEdges.get(key) || 0) + 1);
+              }
+            }
+          }
+
+          const adjacency = new Map();
+          for (const [key, weight] of rawEdges) {
+            if (weight < minSharedBorrowers) continue;
+            const [left, right] = key.split("|");
+            addToWeightedMap(adjacency, left, right, weight);
+            addToWeightedMap(adjacency, right, left, weight);
+          }
+          return adjacency;
+        }
+
+        agentAttributeSets(column) {
+          const result = new Map();
+          if (column === BORROWER_COL) {
+            for (const [agentId, borrowers] of this.agentToBorrowers.entries()) {
+              result.set(agentId, new Set(borrowers));
+            }
+            return result;
+          }
+          for (const [agentId, borrowers] of this.agentToBorrowers.entries()) {
+            const values = new Set();
+            for (const borrowerId of borrowers) {
+              for (const loan of this.loansByBorrower.get(borrowerId) || []) {
+                const value = normalizeValue(loan[column]);
+                if (value) values.add(value);
+              }
+            }
+            result.set(agentId, values);
+          }
+          return result;
+        }
+
+        connectedComponentRule() {
+          if (this.reloanFilter === "all") return { sharedUser: 2, ipBorrowerLimit: 50 };
+          return { sharedUser: 1, ipBorrowerLimit: 20 };
+        }
+
+        agentRelationCounts(ipBorrowerLimit = this.connectedComponentRule().ipBorrowerLimit) {
+          const agents = [...this.agentToBorrowers.keys()].sort();
+          const borrowerSets = this.agentAttributeSets(BORROWER_COL);
+          const deviceSets = this.agentAttributeSets(DEVICE_COL);
+          const ipSets = this.agentAttributeSets(IP_COL);
+          const addrSets = this.agentAttributeSets(ADDR_CLUSTER_COL);
+          const ipToBorrowers = new Map();
+          for (const loan of this.loanRows) {
+            const ip = normalizeValue(loan[IP_COL]);
+            const borrowerId = normalizePhone(loan[BORROWER_COL]);
+            if (ip && borrowerId) addToSetMap(ipToBorrowers, ip, borrowerId);
+          }
+          const eligibleIps = new Set(
+            [...ipToBorrowers.entries()]
+              .filter(([, borrowers]) => borrowers.size <= ipBorrowerLimit)
+              .map(([ip]) => ip)
+          );
+
+          const counts = new Map();
+          for (let leftIndex = 0; leftIndex < agents.length; leftIndex += 1) {
+            for (let rightIndex = leftIndex + 1; rightIndex < agents.length; rightIndex += 1) {
+              const left = agents[leftIndex];
+              const right = agents[rightIndex];
+              const sharedIpAll = intersection(ipSets.get(left) || new Set(), ipSets.get(right) || new Set());
+              const count = {
+                user: intersectionSize(borrowerSets.get(left) || new Set(), borrowerSets.get(right) || new Set()),
+                device: intersectionSize(deviceSets.get(left) || new Set(), deviceSets.get(right) || new Set()),
+                ip: [...sharedIpAll].filter((ip) => eligibleIps.has(ip)).length,
+                ip_all: sharedIpAll.size,
+                address: intersectionSize(addrSets.get(left) || new Set(), addrSets.get(right) || new Set()),
+              };
+              if (count.user || count.device || count.ip_all || count.address) {
+                counts.set(`${left}|${right}`, count);
+              }
+            }
+          }
+          return counts;
+        }
+
+        filteredAgentProjection() {
+          const rule = this.connectedComponentRule();
+          const adjacency = new Map();
+          for (const [key, count] of this.agentRelationCounts(rule.ipBorrowerLimit)) {
+            if (!(count.device >= 1 || count.user >= rule.sharedUser || count.ip >= 2 || count.address >= 1)) continue;
+            const [left, right] = key.split("|");
+            const weight = count.user + count.device * 1.2 + count.ip * 0.8 + count.address;
+            addToWeightedMap(adjacency, left, right, weight);
+            addToWeightedMap(adjacency, right, left, weight);
+          }
+          return adjacency;
+        }
+
+        agentProjectionByColumn(column) {
+          const adjacency = new Map();
+          const attributeSets = this.agentAttributeSets(column);
+          const agents = [...this.agentToBorrowers.keys()].sort();
+          for (let leftIndex = 0; leftIndex < agents.length; leftIndex += 1) {
+            for (let rightIndex = leftIndex + 1; rightIndex < agents.length; rightIndex += 1) {
+              const left = agents[leftIndex];
+              const right = agents[rightIndex];
+              const weight = intersectionSize(attributeSets.get(left) || new Set(), attributeSets.get(right) || new Set());
+              if (!weight) continue;
+              addToWeightedMap(adjacency, left, right, weight);
+              addToWeightedMap(adjacency, right, left, weight);
+            }
+          }
+          return adjacency;
+        }
+
+        agentMultiProjection() {
+          const adjacency = new Map();
+          for (const [key, count] of this.agentRelationCounts()) {
+            const weight = count.user + count.device * 1.2 + count.ip_all * 0.8 + count.address;
+            if (!weight) continue;
+            const [left, right] = key.split("|");
+            addToWeightedMap(adjacency, left, right, weight);
+            addToWeightedMap(adjacency, right, left, weight);
+          }
+          for (const agentId of this.agentToBorrowers.keys()) {
+            if (!adjacency.has(agentId)) adjacency.set(agentId, new Map());
+          }
+          return adjacency;
+        }
+
+        pagerank(adjacency, damping = 0.85, iterations = 40) {
+          const nodes = [...this.agentToBorrowers.keys()].sort();
+          if (!nodes.length) return {};
+          const n = nodes.length;
+          let scores = Object.fromEntries(nodes.map((node) => [node, 1 / n]));
+          for (let i = 0; i < iterations; i += 1) {
+            const nextScores = Object.fromEntries(nodes.map((node) => [node, (1 - damping) / n]));
+            const dangling = nodes.filter((node) => !(adjacency.get(node)?.size)).reduce((total, node) => total + scores[node], 0);
+            const danglingShare = damping * dangling / n;
+            for (const node of nodes) {
+              nextScores[node] += danglingShare;
+              const neighbors = adjacency.get(node) || new Map();
+              const weightSum = [...neighbors.values()].reduce((total, value) => total + value, 0);
+              if (!weightSum) continue;
+              for (const [neighbor, weight] of neighbors) {
+                nextScores[neighbor] = (nextScores[neighbor] || (1 - damping) / n) + damping * scores[node] * weight / weightSum;
+              }
+            }
+            scores = nextScores;
+          }
+          return scores;
+        }
+
+        userProjection() {
+          const relationColumns = [AGENT_COL, DEVICE_COL, IP_COL, ADDR_CLUSTER_COL];
+          const relationWeights = {
+            [AGENT_COL]: 1.0,
+            [DEVICE_COL]: 1.2,
+            [IP_COL]: 0.8,
+            [ADDR_CLUSTER_COL]: 1.0,
+          };
+          const valueToBorrowers = new Map();
+          for (const loan of this.loanRows) {
+            const borrowerId = normalizePhone(loan[BORROWER_COL]);
+            if (!borrowerId) continue;
+            for (const column of relationColumns) {
+              const value = normalizeValue(loan[column]);
+              if (value) addToSetMap(valueToBorrowers, `${column}|${value}`, borrowerId);
+            }
+          }
+
+          const rawEdges = new Map();
+          for (const [key, borrowersSet] of valueToBorrowers) {
+            const column = key.split("|", 1)[0];
+            const weight = relationWeights[column] || 1;
+            const borrowers = [...borrowersSet].sort();
+            for (let leftIndex = 0; leftIndex < borrowers.length; leftIndex += 1) {
+              for (let rightIndex = leftIndex + 1; rightIndex < borrowers.length; rightIndex += 1) {
+                const edgeKey = `${borrowers[leftIndex]}|${borrowers[rightIndex]}`;
+                rawEdges.set(edgeKey, (rawEdges.get(edgeKey) || 0) + weight);
+              }
+            }
+          }
+
+          const adjacency = new Map();
+          for (const borrowerId of this.borrowerToAgents.keys()) adjacency.set(borrowerId, new Map());
+          for (const [key, weight] of rawEdges) {
+            const [left, right] = key.split("|");
+            addToWeightedMap(adjacency, left, right, weight);
+            addToWeightedMap(adjacency, right, left, weight);
+          }
+          return adjacency;
+        }
+
+        louvainPartition(adjacency, maxIter = 20) {
+          const nodes = [...adjacency.keys()].sort();
+          const communities = Object.fromEntries(nodes.map((node) => [node, node]));
+          const degree = Object.fromEntries(nodes.map((node) => [node, sumMapValues(adjacency.get(node) || new Map())]));
+          const totalWeight = Object.values(degree).reduce((total, value) => total + value, 0) / 2;
+          if (!totalWeight) return normalizePartitionIds(communities, "L");
+          const communityTotals = { ...degree };
+
+          for (let iter = 0; iter < maxIter; iter += 1) {
+            let moved = false;
+            for (const node of nodes) {
+              const oldCommunity = communities[node];
+              const nodeDegree = degree[node];
+              communityTotals[oldCommunity] = (communityTotals[oldCommunity] || 0) - nodeDegree;
+              const neighborWeights = {};
+              for (const [neighbor, weight] of adjacency.get(node) || new Map()) {
+                const communityId = communities[neighbor];
+                neighborWeights[communityId] = (neighborWeights[communityId] || 0) + weight;
+              }
+
+              let bestCommunity = oldCommunity;
+              let bestGain = 0;
+              for (const [communityId, kin] of Object.entries(neighborWeights)) {
+                const gain = kin - nodeDegree * (communityTotals[communityId] || 0) / (2 * totalWeight);
+                if (gain > bestGain) {
+                  bestGain = gain;
+                  bestCommunity = communityId;
+                }
+              }
+
+              communities[node] = bestCommunity;
+              communityTotals[bestCommunity] = (communityTotals[bestCommunity] || 0) + nodeDegree;
+              if (bestCommunity !== oldCommunity) moved = true;
+            }
+            if (!moved) break;
+          }
+          return normalizePartitionIds(communities, "L");
+        }
+
+        leidenPartition(adjacency) {
+          const initial = this.louvainPartition(adjacency);
+          const refined = this.splitDisconnectedPartition(initial, adjacency);
+          return normalizePartitionIds(refined, "LD");
+        }
+
+        splitDisconnectedPartition(partition, adjacency) {
+          const byCommunity = new Map();
+          for (const [node, communityId] of Object.entries(partition)) addToSetMap(byCommunity, communityId, node);
+          const refined = {};
+          let counter = 1;
+          for (const communityNodes of byCommunity.values()) {
+            const seen = new Set();
+            for (const start of [...communityNodes].sort()) {
+              if (seen.has(start)) continue;
+              const stack = [start];
+              const component = new Set();
+              seen.add(start);
+              while (stack.length) {
+                const current = stack.pop();
+                component.add(current);
+                for (const neighbor of (adjacency.get(current) || new Map()).keys()) {
+                  if (communityNodes.has(neighbor) && !seen.has(neighbor)) {
+                    seen.add(neighbor);
+                    stack.push(neighbor);
+                  }
+                }
+              }
+              const communityId = `R${String(counter).padStart(3, "0")}`;
+              counter += 1;
+              for (const node of component) refined[node] = communityId;
+            }
+          }
+          return refined;
+        }
+
+        communityAttributeDensity(agents, column, possibleEdges) {
+          if (!possibleEdges) return 0;
+          const valueToAgents = new Map();
+          for (const loan of this.loanRows) {
+            const agentId = normalizePhone(loan[AGENT_COL]);
+            const value = normalizeValue(loan[column]);
+            if (agents.has(agentId) && value) addToSetMap(valueToAgents, value, agentId);
+          }
+          const edges = new Set();
+          for (const linkedAgents of valueToAgents.values()) {
+            const items = [...linkedAgents].sort();
+            for (let left = 0; left < items.length; left += 1) {
+              for (let right = left + 1; right < items.length; right += 1) {
+                edges.add(`${items[left]}|${items[right]}`);
+              }
+            }
+          }
+          return edges.size / possibleEdges;
+        }
+
+        agentCommunityComponents(minSharedBorrowers = 1, minAgents = 2) {
+          return this.agentComponentsFromAdjacency(this.filteredAgentProjection(), minAgents);
+        }
+
+        agentComponentsFromAdjacency(adjacency, minAgents = 1) {
+          const seen = new Set();
+          const components = [];
+          for (const agentId of [...this.agentToBorrowers.keys()].sort()) {
+            if (seen.has(agentId)) continue;
+            const stack = [agentId];
+            const component = new Set();
+            seen.add(agentId);
+            while (stack.length) {
+              const current = stack.pop();
+              component.add(current);
+              for (const neighbor of (adjacency.get(current) || new Map()).keys()) {
+                if (!seen.has(neighbor)) {
+                  seen.add(neighbor);
+                  stack.push(neighbor);
+                }
+              }
+            }
+            if (component.size >= minAgents) components.push(component);
+          }
+          return components;
+        }
+
+        communityBetweenness(agents, adjacency) {
+          if (agents.size > 80) return Object.fromEntries([...agents].map((agentId) => [agentId, 0]));
+          const agentList = [...agents];
+          const centrality = Object.fromEntries(agentList.map((agentId) => [agentId, 0]));
+
+          for (const source of agentList) {
+            const stack = [];
+            const predecessors = Object.fromEntries(agentList.map((agentId) => [agentId, []]));
+            const sigma = Object.fromEntries(agentList.map((agentId) => [agentId, 0]));
+            const distance = Object.fromEntries(agentList.map((agentId) => [agentId, -1]));
+            sigma[source] = 1;
+            distance[source] = 0;
+            const queue = [source];
+            for (let cursor = 0; cursor < queue.length; cursor += 1) {
+              const current = queue[cursor];
+              stack.push(current);
+              for (const neighbor of (adjacency.get(current) || new Map()).keys()) {
+                if (!agents.has(neighbor)) continue;
+                if (distance[neighbor] < 0) {
+                  queue.push(neighbor);
+                  distance[neighbor] = distance[current] + 1;
+                }
+                if (distance[neighbor] === distance[current] + 1) {
+                  sigma[neighbor] += sigma[current];
+                  predecessors[neighbor].push(current);
+                }
+              }
+            }
+
+            const dependency = Object.fromEntries(agentList.map((agentId) => [agentId, 0]));
+            while (stack.length) {
+              const node = stack.pop();
+              for (const predecessor of predecessors[node]) {
+                if (sigma[node]) {
+                  dependency[predecessor] += (sigma[predecessor] / sigma[node]) * (1 + dependency[node]);
+                }
+              }
+              if (node !== source) centrality[node] += dependency[node];
+            }
+          }
+
+          const scale = (agents.size - 1) * (agents.size - 2);
+          if (scale > 0) {
+            for (const agentId of agentList) centrality[agentId] /= scale;
+          }
+          return centrality;
+        }
+
+        communityMetrics(communityId, agents, adjacency, basis = this.overdueBasis) {
+          const borrowers = new Set();
+          for (const agentId of agents) {
+            for (const borrowerId of this.agentToBorrowers.get(agentId) || []) borrowers.add(borrowerId);
+          }
+          let loans = [];
+          for (const borrowerId of borrowers) loans.push(...(this.loansByBorrower.get(borrowerId) || []));
+          loans = this.fundedLoans(loans);
+          const overdue = loans.filter((loan) => this.isOverdue(loan, basis)).length;
+          const internalEdges = [];
+          for (const left of agents) {
+            for (const [right, weight] of adjacency.get(left) || new Map()) {
+              if (agents.has(right) && left < right) internalEdges.push([left, right, weight]);
+            }
+          }
+          const agentCount = agents.size;
+          const borrowerCount = borrowers.size;
+          const possibleEdges = agentCount * (agentCount - 1) / 2;
+          const totalShared = internalEdges.reduce((total, edge) => total + edge[2], 0);
+          const sharedBorrowers = [...borrowers].filter((borrowerId) => {
+            const linkedAgents = this.borrowerToAgents.get(borrowerId) || new Set();
+            return [...linkedAgents].filter((agentId) => agents.has(agentId)).length >= 2;
+          });
+          const degree = {};
+          const weightedDegree = {};
+          for (const agentId of agents) {
+            const neighbors = [...(adjacency.get(agentId) || new Map()).entries()].filter(([neighbor]) => agents.has(neighbor));
+            degree[agentId] = neighbors.length;
+            weightedDegree[agentId] = neighbors.reduce((total, [, weight]) => total + weight, 0);
+          }
+          const betweenness = this.communityBetweenness(agents, adjacency);
+          const centralAgents = [...agents]
+            .sort((left, right) => (
+              weightedDegree[right] - weightedDegree[left] ||
+              degree[right] - degree[left] ||
+              betweenness[right] - betweenness[left] ||
+              (this.agentToBorrowers.get(right)?.size || 0) - (this.agentToBorrowers.get(left)?.size || 0)
+            ))
+            .slice(0, 5);
+          const badDebtRate = loans.length ? overdue / loans.length : 0;
+          const density = possibleEdges ? internalEdges.length / possibleEdges : 0;
+          const sharedRatio = borrowerCount ? sharedBorrowers.length / borrowerCount : 0;
+          const deviceDensity = this.communityAttributeDensity(agents, DEVICE_COL, possibleEdges);
+          const ipDensity = this.communityAttributeDensity(agents, IP_COL, possibleEdges);
+          const addressDensity = this.communityAttributeDensity(agents, ADDR_CLUSTER_COL, possibleEdges);
+          const riskScore = Math.min(
+            100,
+            Math.round((badDebtRate * 55 + density * 20 + Math.min(sharedRatio, 1) * 15 + Math.min(agentCount / 10, 1) * 10) * 100) / 100,
+          );
+
+          return {
+            community_id: communityId,
+            community_type: "agent",
+            agent_count: agentCount,
+            borrower_count: borrowerCount,
+            loan_count: loans.length,
+            overdue_loan_count: overdue,
+            bad_debt_rate: badDebtRate,
+            edge_count: internalEdges.length,
+            density,
+            shared_borrower_count: sharedBorrowers.length,
+            avg_shared_borrowers_per_edge: internalEdges.length ? totalShared / internalEdges.length : 0,
+            avg_degree: agentCount ? Object.values(degree).reduce((total, value) => total + value, 0) / agentCount : 0,
+            max_degree: Object.values(degree).length ? Math.max(...Object.values(degree)) : 0,
+            device_density: deviceDensity,
+            ip_density: ipDensity,
+            address_density: addressDensity,
+            risk_score: riskScore,
+            top_agents: centralAgents.map((agentId) => ({
+              agent_id: agentId,
+              label: mask(agentId),
+              degree: degree[agentId] || 0,
+              weighted_degree: weightedDegree[agentId] || 0,
+              degree_centrality: agentCount > 1 ? (degree[agentId] || 0) / (agentCount - 1) : 0,
+              betweenness_centrality: betweenness[agentId] || 0,
+              first_degree_borrowers: this.agentToBorrowers.get(agentId)?.size || 0,
+            })),
+          };
+        }
+
+        agentCommunities(basis = this.overdueBasis, minSharedBorrowers = 1, minAgents = 2, limit = 20) {
+          const adjacency = this.filteredAgentProjection();
+          const components = this.agentCommunityComponents(minSharedBorrowers, minAgents);
+          return components
+            .map((agents, index) => this.communityMetrics(`C${String(index + 1).padStart(3, "0")}`, agents, adjacency, basis))
+            .sort((a, b) => (
+              b.risk_score - a.risk_score ||
+              b.bad_debt_rate - a.bad_debt_rate ||
+              b.agent_count - a.agent_count ||
+              b.shared_borrower_count - a.shared_borrower_count
+            ))
+            .slice(0, limit);
+        }
+
+        userAttributeDensity(borrowers, column, possibleEdges) {
+          if (!possibleEdges) return 0;
+          const valueToBorrowers = new Map();
+          for (const borrowerId of borrowers) {
+            for (const loan of this.loansByBorrower.get(borrowerId) || []) {
+              const value = normalizeValue(loan[column]);
+              if (value) addToSetMap(valueToBorrowers, value, borrowerId);
+            }
+          }
+          const edges = new Set();
+          for (const linkedBorrowers of valueToBorrowers.values()) {
+            const items = [...linkedBorrowers].sort();
+            for (let left = 0; left < items.length; left += 1) {
+              for (let right = left + 1; right < items.length; right += 1) {
+                edges.add(`${items[left]}|${items[right]}`);
+              }
+            }
+          }
+          return edges.size / possibleEdges;
+        }
+
+        userCommunityMetrics(communityId, borrowers, adjacency, basis = this.overdueBasis) {
+          const allLoans = this.loansForBorrowers(borrowers);
+          const loans = this.fundedLoans(allLoans);
+          const overdue = loans.filter((loan) => this.isOverdue(loan, basis)).length;
+          const agents = this.distinctFromLoans(allLoans, AGENT_COL);
+          const edgeCount = [...borrowers].reduce((count, left) => {
+            for (const right of (adjacency.get(left) || new Map()).keys()) {
+              if (borrowers.has(right) && left < right) count += 1;
+            }
+            return count;
+          }, 0);
+          const possibleEdges = borrowers.size * (borrowers.size - 1) / 2;
+          const density = possibleEdges ? edgeCount / possibleEdges : 0;
+          const badDebtRate = loans.length ? overdue / loans.length : 0;
+          const deviceDensity = this.userAttributeDensity(borrowers, DEVICE_COL, possibleEdges);
+          const ipDensity = this.userAttributeDensity(borrowers, IP_COL, possibleEdges);
+          const addressDensity = this.userAttributeDensity(borrowers, ADDR_CLUSTER_COL, possibleEdges);
+          const riskScore = Math.min(100, Math.round((badDebtRate * 55 + density * 15 + deviceDensity * 10 + ipDensity * 10 + addressDensity * 10) * 100) / 100);
+          const topAgents = [...agents]
+            .sort((left, right) => (this.agentToBorrowers.get(right)?.size || 0) - (this.agentToBorrowers.get(left)?.size || 0))
+            .slice(0, 5);
+          return {
+            community_id: communityId,
+            community_type: "user",
+            agent_count: agents.size,
+            borrower_count: borrowers.size,
+            loan_count: loans.length,
+            overdue_loan_count: overdue,
+            bad_debt_rate: badDebtRate,
+            edge_count: edgeCount,
+            density,
+            shared_borrower_count: 0,
+            avg_shared_borrowers_per_edge: 0,
+            avg_degree: borrowers.size ? (2 * edgeCount) / borrowers.size : 0,
+            max_degree: Math.max(0, ...[...borrowers].map((node) => [...(adjacency.get(node) || new Map()).keys()].filter((neighbor) => borrowers.has(neighbor)).length)),
+            device_density: deviceDensity,
+            ip_density: ipDensity,
+            address_density: addressDensity,
+            risk_score: riskScore,
+            top_agents: topAgents.map((agentId) => ({
+              agent_id: agentId,
+              label: mask(agentId),
+              degree: (this.agentToBorrowers.get(agentId) || new Set()).size,
+              weighted_degree: (this.agentToBorrowers.get(agentId) || new Set()).size,
+              degree_centrality: 0,
+              betweenness_centrality: 0,
+              first_degree_borrowers: (this.agentToBorrowers.get(agentId) || new Set()).size,
+            })),
+          };
+        }
+
+        userCommunities(method, basis = this.overdueBasis, limit = 20) {
+          const adjacency = this.userProjection();
+          const partition = method === "leiden" ? this.leidenPartition(adjacency) : this.louvainPartition(adjacency);
+          const groups = new Map();
+          for (const [borrowerId, communityId] of Object.entries(partition)) addToSetMap(groups, communityId, borrowerId);
+          return [...groups.entries()]
+            .map(([communityId, borrowers]) => this.userCommunityMetrics(communityId, borrowers, adjacency, basis))
+            .sort((a, b) => b.risk_score - a.risk_score || b.bad_debt_rate - a.bad_debt_rate || b.borrower_count - a.borrower_count)
+            .slice(0, limit);
+        }
+
+        agentLouvainLeidenCommunities(method, basis = this.overdueBasis, limit = 20) {
+          const adjacency = this.agentMultiProjection();
+          const partition = method === "leiden" ? this.leidenPartition(adjacency) : this.louvainPartition(adjacency);
+          const groups = new Map();
+          for (const [agentId, communityId] of Object.entries(partition)) addToSetMap(groups, communityId, agentId);
+          return [...groups.entries()]
+            .map(([communityId, agents]) => this.communityMetrics(communityId, agents, adjacency, basis))
+            .sort((a, b) => b.risk_score - a.risk_score || b.bad_debt_rate - a.bad_debt_rate || b.agent_count - a.agent_count || b.borrower_count - a.borrower_count)
+            .slice(0, limit);
+        }
+
+        communities(method = "connected_components", basis = this.overdueBasis, limit = 20) {
+          if (["louvain", "leiden"].includes(method)) return this.userCommunities(method, basis, limit);
+          return this.agentCommunities(basis, 1, 2, limit);
+        }
+
+        communityFeatureIndex(basis = this.overdueBasis, method = "connected_components") {
+          const adjacency = this.agentProjection();
+          const connectedAdjacency = this.filteredAgentProjection();
+          const multiAdjacency = this.agentMultiProjection();
+          const deviceAdjacency = this.agentProjectionByColumn(DEVICE_COL);
+          const ipAdjacency = this.agentProjectionByColumn(IP_COL);
+          const addressAdjacency = this.agentProjectionByColumn(ADDR_CLUSTER_COL);
+          const pagerank = this.pagerank(adjacency);
+          const connectedPagerank = this.pagerank(connectedAdjacency);
+          const multiPagerank = this.pagerank(multiAdjacency);
+          const agentFeatures = {};
+          const communityByAgent = {};
+          const communityByBorrower = {};
+          const agentCommunityByAgent = {};
+          const agentCommunityById = {};
+          this.agentCommunityComponents().forEach((agents, index) => {
+            const community = this.communityMetrics(`C${String(index + 1).padStart(3, "0")}`, agents, connectedAdjacency, basis);
+            const betweenness = this.communityBetweenness(agents, connectedAdjacency);
+            for (const agentId of agents) {
+              const neighbors = [...(connectedAdjacency.get(agentId) || new Map()).entries()].filter(([neighbor]) => agents.has(neighbor));
+              agentFeatures[agentId] = {
+                "节点度数(连通分量关系)": neighbors.length,
+                "加权度数(连通分量关系)": neighbors.reduce((total, [, weight]) => total + weight, 0),
+                "PageRank分数(连通分量关系)": connectedPagerank[agentId] || 0,
+                "中介中心性(连通分量关系)": betweenness[agentId] || 0,
+                "连通子图大小(连通分量关系)": agents.size,
+                "社区id(连通分量关系)": community.community_id,
+              };
+              communityByAgent[agentId] = community;
+            }
+          });
+
+          for (const agentId of this.agentToBorrowers.keys()) {
+            if (agentFeatures[agentId]) continue;
+            const agentLoans = this.fundedLoans(this.loansForBorrowers(this.agentToBorrowers.get(agentId) || new Set()));
+            agentFeatures[agentId] = {
+              "节点度数(连通分量关系)": connectedAdjacency.get(agentId)?.size || 0,
+              "加权度数(连通分量关系)": [...(connectedAdjacency.get(agentId) || new Map()).values()].reduce((total, value) => total + value, 0),
+              "PageRank分数(连通分量关系)": connectedPagerank[agentId] || 0,
+              "中介中心性(连通分量关系)": 0,
+              "连通子图大小(连通分量关系)": 1,
+              "社区id(连通分量关系)": "",
+            };
+            communityByAgent[agentId] = {
+              community_id: "",
+              agent_count: 1,
+              borrower_count: this.agentToBorrowers.get(agentId)?.size || 0,
+              loan_count: agentLoans.length,
+              bad_debt_rate: this.badRate(agentLoans, basis),
+              device_density: 0,
+              ip_density: 0,
+              address_density: 0,
+              risk_score: 0,
+              shared_borrower_count: 0,
+            };
+          }
+
+          const sharedUserSeen = new Set();
+          this.agentComponentsFromAdjacency(adjacency, 2).forEach((agents, index) => {
+            const betweenness = this.communityBetweenness(agents, adjacency);
+            const communityId = `SC${String(index + 1).padStart(3, "0")}`;
+            for (const agentId of agents) {
+              const neighbors = [...(adjacency.get(agentId) || new Map()).entries()].filter(([neighbor]) => agents.has(neighbor));
+              const features = agentFeatures[agentId] || {};
+              Object.assign(features, {
+                "节点度数(共享用户)": neighbors.length,
+                "加权度数(共享用户)": neighbors.reduce((total, [, weight]) => total + weight, 0),
+                "PageRank分数(共享用户)": pagerank[agentId] || 0,
+                "中介中心性(共享用户)": betweenness[agentId] || 0,
+                "连通子图大小(共享用户)": agents.size,
+                "社区id(共享用户)": communityId,
+              });
+              agentFeatures[agentId] = features;
+              sharedUserSeen.add(agentId);
+            }
+          });
+
+          for (const agentId of this.agentToBorrowers.keys()) {
+            if (sharedUserSeen.has(agentId)) continue;
+            const features = agentFeatures[agentId] || {};
+            Object.assign(features, {
+              "节点度数(共享用户)": adjacency.get(agentId)?.size || 0,
+              "加权度数(共享用户)": [...(adjacency.get(agentId) || new Map()).values()].reduce((total, value) => total + value, 0),
+              "PageRank分数(共享用户)": pagerank[agentId] || 0,
+              "中介中心性(共享用户)": 0,
+              "连通子图大小(共享用户)": 1,
+              "社区id(共享用户)": "",
+            });
+            agentFeatures[agentId] = features;
+          }
+
+          const relationAdjacencies = {
+            共享设备: deviceAdjacency,
+            共享IP: ipAdjacency,
+            共享地址簇: addressAdjacency,
+          };
+          for (const agentId of this.agentToBorrowers.keys()) {
+            const features = agentFeatures[agentId] || {};
+            for (const [label, relationAdjacency] of Object.entries(relationAdjacencies)) {
+              features[`节点度数(${label})`] = relationAdjacency.get(agentId)?.size || 0;
+              features[`加权度数(${label})`] = [...(relationAdjacency.get(agentId) || new Map()).values()].reduce((total, value) => total + value, 0);
+            }
+            agentFeatures[agentId] = features;
+          }
+          this.agentComponentsFromAdjacency(multiAdjacency).forEach((agents, index) => {
+            const betweenness = this.communityBetweenness(agents, multiAdjacency);
+            for (const agentId of agents) {
+              const neighbors = [...(multiAdjacency.get(agentId) || new Map()).entries()].filter(([neighbor]) => agents.has(neighbor));
+              const features = agentFeatures[agentId] || {};
+              Object.assign(features, {
+                "节点度数(多关系)": neighbors.length,
+                "加权度数(多关系)": neighbors.reduce((total, [, weight]) => total + weight, 0),
+                "PageRank分数(多关系)": multiPagerank[agentId] || 0,
+                "中介中心性(多关系)": betweenness[agentId] || 0,
+                "连通子图大小(多关系)": agents.size,
+                "社区id(多关系)": agents.size >= 2 ? `MC${String(index + 1).padStart(3, "0")}` : "",
+              });
+              agentFeatures[agentId] = features;
+            }
+          });
+          if (["louvain", "leiden"].includes(method)) {
+            const userAdjacency = this.userProjection();
+            const partition = method === "leiden" ? this.leidenPartition(userAdjacency) : this.louvainPartition(userAdjacency);
+            const groups = new Map();
+            for (const [borrowerId, communityId] of Object.entries(partition)) addToSetMap(groups, communityId, borrowerId);
+            for (const [communityId, borrowers] of groups.entries()) {
+              const community = this.userCommunityMetrics(communityId, borrowers, userAdjacency, basis);
+              for (const borrowerId of borrowers) communityByBorrower[borrowerId] = community;
+            }
+
+            const agentAdjacency = this.agentMultiProjection();
+            const agentPartition = method === "leiden" ? this.leidenPartition(agentAdjacency) : this.louvainPartition(agentAdjacency);
+            const agentGroups = new Map();
+            for (const [agentId, communityId] of Object.entries(agentPartition)) addToSetMap(agentGroups, communityId, agentId);
+            const agentPagerank = this.pagerank(agentAdjacency);
+            for (const [communityId, agents] of agentGroups.entries()) {
+              const community = this.communityMetrics(communityId, agents, agentAdjacency, basis);
+              const betweenness = this.communityBetweenness(agents, agentAdjacency);
+              for (const agentId of agents) {
+                const neighbors = [...(agentAdjacency.get(agentId) || new Map()).entries()].filter(([neighbor]) => agents.has(neighbor));
+                const features = agentFeatures[agentId] || {};
+                Object.assign(features, {
+                  "节点度数(Agent)": neighbors.length,
+                  "加权度数(Agent)": neighbors.reduce((total, [, weight]) => total + weight, 0),
+                  "PageRank分数(Agent)": agentPagerank[agentId] || 0,
+                  "中介中心性(Agent)": betweenness[agentId] || 0,
+                  "社区id(Agent)": communityId,
+                  "社区规模(Agent)": community.agent_count,
+                  "社区借款人数(Agent)": community.borrower_count,
+                  "社区贷款笔数(Agent)": community.loan_count,
+                  "社区坏账率(Agent)": community.bad_debt_rate,
+                  "社区设备密度(Agent)": community.device_density,
+                  "社区ip密度(Agent)": community.ip_density,
+                  "社区地址密度(Agent)": community.address_density,
+                  "社区共享借款人数(Agent)": community.shared_borrower_count,
+                  "社区风险分(Agent)": community.risk_score,
+                });
+                agentFeatures[agentId] = features;
+                agentCommunityByAgent[agentId] = community;
+              }
+              agentCommunityById[communityId] = community;
+            }
+          }
+          return { agentFeatures, communityByAgent, communityByBorrower, agentCommunityByAgent, agentCommunityById };
+        }
+
+        featureTable(basis = this.overdueBasis, method = "connected_components") {
+          const loansByAgent = new Map();
+          const loansByAddrCluster = new Map();
+          const loansByDevice = new Map();
+          const loansByIp = new Map();
+          for (const loan of this.loanRows) {
+            addToListMap(loansByAgent, normalizePhone(loan[AGENT_COL]), loan);
+            if (normalizeValue(loan[ADDR_CLUSTER_COL])) addToListMap(loansByAddrCluster, normalizeValue(loan[ADDR_CLUSTER_COL]), loan);
+            if (normalizeValue(loan[DEVICE_COL])) addToListMap(loansByDevice, normalizeValue(loan[DEVICE_COL]), loan);
+            if (normalizeValue(loan[IP_COL])) addToListMap(loansByIp, normalizeValue(loan[IP_COL]), loan);
+          }
+
+          const { agentFeatures, communityByAgent, communityByBorrower } = this.communityFeatureIndex(basis, method);
+          const featureColumns = [
+            "地址簇大小_地址数", "收货人手机号关联人数", "收货人手机号关联设备数", "收货人手机号关联ip数", "收货人手机号关联地址簇数", "收货人手机号坏账率",
+            "地址簇关联人数", "地址簇关联收货人手机号数", "地址簇关联设备数", "地址簇关联ip数", "地址簇申请笔数", "地址簇坏账率",
+            "设备关联人数", "设备关联地址簇数", "设备关联收货手机号数", "设备申请笔数", "设备坏账率",
+            "IP关联人数", "IP关联设备数", "IP申请笔数", "IP坏账率",
+            "借款人一度中介数", "借款人贷款笔数", "借款人坏账率",
+            "二度借款人数", "二度中介数", "二度设备数", "二度ip数", "二度地址簇数", "二度坏账率", "二度申请人数", "二度申请笔数", "二度贷款笔数",
+            "节点度数(共享用户)", "加权度数(共享用户)", "PageRank分数(共享用户)", "中介中心性(共享用户)", "连通子图大小(共享用户)", "社区id(共享用户)",
+            "节点度数(连通分量关系)", "加权度数(连通分量关系)", "PageRank分数(连通分量关系)", "中介中心性(连通分量关系)", "连通子图大小(连通分量关系)", "社区id(连通分量关系)",
+            "节点度数(共享设备)", "加权度数(共享设备)", "节点度数(共享IP)", "加权度数(共享IP)", "节点度数(共享地址簇)", "加权度数(共享地址簇)",
+            "节点度数(多关系)", "加权度数(多关系)", "PageRank分数(多关系)", "中介中心性(多关系)", "连通子图大小(多关系)", "社区id(多关系)",
+            "社区id", "社区规模", "社区借款人数", "社区贷款笔数", "社区坏账率", "社区设备密度", "社区ip密度", "社区地址密度", "社区共享借款人数", "社区风险分",
+          ];
+          if (["louvain", "leiden"].includes(method)) {
+            featureColumns.push(
+              "节点度数(Agent)", "加权度数(Agent)", "PageRank分数(Agent)", "中介中心性(Agent)",
+              "社区id(Agent)", "社区规模(Agent)", "社区借款人数(Agent)", "社区贷款笔数(Agent)",
+              "社区坏账率(Agent)", "社区设备密度(Agent)", "社区ip密度(Agent)", "社区地址密度(Agent)",
+              "社区共享借款人数(Agent)", "社区风险分(Agent)",
+            );
+          }
+
+          const rows = this.loanRows.map((loan) => {
+            const agentId = normalizePhone(loan[AGENT_COL]);
+            const borrowerId = normalizePhone(loan[BORROWER_COL]);
+            const addrClusterId = normalizeValue(loan[ADDR_CLUSTER_COL]);
+            const deviceId = normalizeValue(loan[DEVICE_COL]);
+            const ip = normalizeValue(loan[IP_COL]);
+            const agentLoans = loansByAgent.get(agentId) || [];
+            const addrLoans = loansByAddrCluster.get(addrClusterId) || [];
+            const deviceLoans = loansByDevice.get(deviceId) || [];
+            const ipLoans = loansByIp.get(ip) || [];
+            const secondBorrowers = this.secondDegreeBorrowers(borrowerId);
+            const secondAgents = this.secondDegreeAgents(agentId);
+            const secondLoans = this.loansForBorrowers(secondBorrowers);
+            const secondFundedLoans = this.fundedLoans(secondLoans);
+            const borrowerFundedLoans = this.fundedLoans(this.loansByBorrower.get(borrowerId) || []);
+            const network = agentFeatures[agentId] || {};
+            const community = ["louvain", "leiden"].includes(method) ? (communityByBorrower[borrowerId] || {}) : (communityByAgent[agentId] || {});
+            const selectedCommunityId = ["louvain", "leiden"].includes(method) ? (community.community_id || "") : (network["社区id(连通分量关系)"] || "");
+            const selectedCommunitySize = ["louvain", "leiden"].includes(method) ? (community.borrower_count || 0) : (community.agent_count || 1);
+            const row = {
+              ...loan,
+              地址簇大小_地址数: this.distinctFromLoans(addrLoans, ADDRESS_COL).size,
+              收货人手机号关联人数: this.distinctFromLoans(agentLoans, BORROWER_COL).size,
+              收货人手机号关联设备数: this.distinctFromLoans(agentLoans, DEVICE_COL).size,
+              收货人手机号关联ip数: this.distinctFromLoans(agentLoans, IP_COL).size,
+              收货人手机号关联地址簇数: this.distinctFromLoans(agentLoans, ADDR_CLUSTER_COL).size,
+              收货人手机号坏账率: this.badRate(agentLoans, basis),
+              地址簇关联人数: this.distinctFromLoans(addrLoans, BORROWER_COL).size,
+              地址簇关联收货人手机号数: this.distinctFromLoans(addrLoans, AGENT_COL).size,
+              地址簇关联设备数: this.distinctFromLoans(addrLoans, DEVICE_COL).size,
+              地址簇关联ip数: this.distinctFromLoans(addrLoans, IP_COL).size,
+              地址簇申请笔数: addrLoans.length,
+              地址簇坏账率: this.badRate(addrLoans, basis),
+              设备关联人数: this.distinctFromLoans(deviceLoans, BORROWER_COL).size,
+              设备关联地址簇数: this.distinctFromLoans(deviceLoans, ADDR_CLUSTER_COL).size,
+              设备关联收货手机号数: this.distinctFromLoans(deviceLoans, AGENT_COL).size,
+              设备申请笔数: deviceLoans.length,
+              设备坏账率: this.badRate(deviceLoans, basis),
+              IP关联人数: this.distinctFromLoans(ipLoans, BORROWER_COL).size,
+              IP关联设备数: this.distinctFromLoans(ipLoans, DEVICE_COL).size,
+              IP申请笔数: ipLoans.length,
+              IP坏账率: this.badRate(ipLoans, basis),
+              借款人一度中介数: this.firstDegreeAgents(borrowerId).size,
+              借款人贷款笔数: borrowerFundedLoans.length,
+              借款人坏账率: this.badRate(borrowerFundedLoans, basis),
+              二度借款人数: secondBorrowers.size,
+              二度中介数: secondAgents.size,
+              二度设备数: this.distinctFromLoans(secondLoans, DEVICE_COL).size,
+              二度ip数: this.distinctFromLoans(secondLoans, IP_COL).size,
+              二度地址簇数: this.distinctFromLoans(secondLoans, ADDR_CLUSTER_COL).size,
+              二度坏账率: this.badRate(secondFundedLoans, basis),
+              二度申请人数: new Set(secondLoans.map((item) => item[BORROWER_COL]).filter(Boolean)).size,
+              二度申请笔数: secondLoans.length,
+              二度贷款笔数: secondFundedLoans.length,
+              "节点度数(共享用户)": network["节点度数(共享用户)"] || 0,
+              "加权度数(共享用户)": network["加权度数(共享用户)"] || 0,
+              "PageRank分数(共享用户)": network["PageRank分数(共享用户)"] || 0,
+              "中介中心性(共享用户)": network["中介中心性(共享用户)"] || 0,
+              "连通子图大小(共享用户)": network["连通子图大小(共享用户)"] || 1,
+              "社区id(共享用户)": network["社区id(共享用户)"] || "",
+              "节点度数(连通分量关系)": network["节点度数(连通分量关系)"] || 0,
+              "加权度数(连通分量关系)": network["加权度数(连通分量关系)"] || 0,
+              "PageRank分数(连通分量关系)": network["PageRank分数(连通分量关系)"] || 0,
+              "中介中心性(连通分量关系)": network["中介中心性(连通分量关系)"] || 0,
+              "连通子图大小(连通分量关系)": network["连通子图大小(连通分量关系)"] || 1,
+              "社区id(连通分量关系)": network["社区id(连通分量关系)"] || "",
+              "节点度数(共享设备)": network["节点度数(共享设备)"] || 0,
+              "加权度数(共享设备)": network["加权度数(共享设备)"] || 0,
+              "节点度数(共享IP)": network["节点度数(共享IP)"] || 0,
+              "加权度数(共享IP)": network["加权度数(共享IP)"] || 0,
+              "节点度数(共享地址簇)": network["节点度数(共享地址簇)"] || 0,
+              "加权度数(共享地址簇)": network["加权度数(共享地址簇)"] || 0,
+              "节点度数(多关系)": network["节点度数(多关系)"] || 0,
+              "加权度数(多关系)": network["加权度数(多关系)"] || 0,
+              "PageRank分数(多关系)": network["PageRank分数(多关系)"] || 0,
+              "中介中心性(多关系)": network["中介中心性(多关系)"] || 0,
+              "连通子图大小(多关系)": network["连通子图大小(多关系)"] || 1,
+              "社区id(多关系)": network["社区id(多关系)"] || "",
+              社区id: selectedCommunityId,
+              社区规模: selectedCommunitySize,
+              社区借款人数: community.borrower_count || 0,
+              社区贷款笔数: community.loan_count || 0,
+              社区坏账率: community.bad_debt_rate || 0,
+              社区设备密度: community.device_density || 0,
+              社区ip密度: community.ip_density || 0,
+              社区地址密度: community.address_density || 0,
+              社区共享借款人数: community.shared_borrower_count || 0,
+              社区风险分: community.risk_score || 0,
+            };
+            if (["louvain", "leiden"].includes(method)) {
+              Object.assign(row, {
+                "节点度数(Agent)": network["节点度数(Agent)"] || 0,
+                "加权度数(Agent)": network["加权度数(Agent)"] || 0,
+                "PageRank分数(Agent)": network["PageRank分数(Agent)"] || 0,
+                "中介中心性(Agent)": network["中介中心性(Agent)"] || 0,
+                "社区id(Agent)": network["社区id(Agent)"] || "",
+                "社区规模(Agent)": network["社区规模(Agent)"] || 0,
+                "社区借款人数(Agent)": network["社区借款人数(Agent)"] || 0,
+                "社区贷款笔数(Agent)": network["社区贷款笔数(Agent)"] || 0,
+                "社区坏账率(Agent)": network["社区坏账率(Agent)"] || 0,
+                "社区设备密度(Agent)": network["社区设备密度(Agent)"] || 0,
+                "社区ip密度(Agent)": network["社区ip密度(Agent)"] || 0,
+                "社区地址密度(Agent)": network["社区地址密度(Agent)"] || 0,
+                "社区共享借款人数(Agent)": network["社区共享借款人数(Agent)"] || 0,
+                "社区风险分(Agent)": network["社区风险分(Agent)"] || 0,
+              });
+            }
+            return row;
+          });
+          const columns = [...this.sourceColumns.filter((column) => rows[0] && column in rows[0])];
+          for (const column of featureColumns) if (!columns.includes(column)) columns.push(column);
+          return { columns, rows };
+        }
+
+        summary(basis = this.overdueBasis, method = "connected_components") {
+          const missing = [...REQUIRED_COLUMNS].filter((name) => !this.columns.includes(name)).sort();
+          const funded = this.fundedLoans(this.loanRows);
+          const overdueTotal = funded.filter((loan) => this.isOverdue(loan, basis)).length;
+          let communityCount = 0;
+          let maxCommunitySize = 0;
+          let communitySizeLabel = "最大团伙中介数";
+          if (["louvain", "leiden"].includes(method)) {
+            const communities = this.userCommunities(method, basis, 100000);
+            communityCount = communities.length;
+            maxCommunitySize = communities.reduce((max, item) => Math.max(max, item.borrower_count || 0), 0);
+            communitySizeLabel = "最大用户社区借款人数";
+          } else {
+            const components = this.agentCommunityComponents();
+            communityCount = components.length;
+            maxCommunitySize = components.reduce((max, item) => Math.max(max, item.size), 0);
+          }
+          return {
+            row_count: this.rows.length,
+            valid_loan_count: funded.length,
+            skipped_rows: this.skippedRows,
+            agent_count: this.agentToBorrowers.size,
+            borrower_count: this.borrowerToAgents.size,
+            relation_count: [...this.agentToBorrowers.values()].reduce((total, value) => total + value.size, 0),
+            community_count: communityCount,
+            max_community_agents: maxCommunitySize,
+            max_community_size: maxCommunitySize,
+            community_size_label: communitySizeLabel,
+            community_method: method,
+            overdue_loan_count: overdueTotal,
+            overdue_rate: funded.length ? overdueTotal / funded.length : 0,
+            missing_columns: missing,
+          };
+        }
+
+        search(query, limit = 10) {
+          const needle = normalizePhone(query);
+          if (!needle) return { agents: [], borrowers: [] };
+          const matched = (values, type) => values
+            .filter((value) => value.includes(needle))
+            .slice(0, limit)
+            .map((value) => ({ id: value, label: mask(value), type }));
+          return {
+            agents: matched([...this.agentToBorrowers.keys()].sort(), "agent"),
+            borrowers: matched([...this.borrowerToAgents.keys()].sort(), "borrower"),
+          };
+        }
+
+        graph(centerType, centerId, basis = this.overdueBasis, secondLimit = 160) {
+          centerId = normalizePhone(centerId);
+          centerType = centerType === "agent" ? "agent" : "borrower";
+          const nodes = new Map();
+          const edges = new Set();
+
+          const addNode = (rawId, type, level) => {
+            if (!rawId) return;
+            const id = `${type}:${rawId}`;
+            const existing = nodes.get(id);
+            if (existing) {
+              existing.level = Math.min(existing.level, level);
+              return;
+            }
+            const data = { id, raw_id: rawId, type, label: ["agent", "borrower"].includes(type) ? mask(rawId) : rawId, level };
+            if (type === "borrower") {
+              const ownLoans = this.fundedLoans(this.loansByBorrower.get(rawId) || []);
+              data.loan_count = ownLoans.length;
+              data.overdue = ownLoans.some((loan) => this.isOverdue(loan, basis));
+            }
+            nodes.set(id, data);
+          };
+
+          const addEdge = (agentId, borrowerId) => edges.add(`agent:${agentId}|borrower:${borrowerId}|agent_borrower`);
+          const addRawEdge = (sourceType, sourceId, targetType, targetId) => {
+            if (sourceId && targetId) edges.add(`${sourceType}:${sourceId}|${targetType}:${targetId}|${sourceType}_${targetType}`);
+          };
+          const addContextNodes = (agentId, borrowerId, level) => {
+            const linkedLoans = (this.loansByBorrower.get(borrowerId) || []).filter((loan) => normalizePhone(loan[AGENT_COL]) === agentId);
+            for (const loan of linkedLoans) {
+              const deviceId = normalizeValue(loan[DEVICE_COL]);
+              const ip = normalizeValue(loan[IP_COL]);
+              const addrClusterId = normalizeValue(loan[ADDR_CLUSTER_COL]);
+              if (deviceId) {
+                addNode(deviceId, "device", level);
+                addRawEdge("borrower", borrowerId, "device", deviceId);
+              }
+              if (ip) {
+                addNode(ip, "ip", level);
+                addRawEdge("borrower", borrowerId, "ip", ip);
+              }
+              if (addrClusterId) {
+                addNode(addrClusterId, "address", level);
+                addRawEdge("agent", agentId, "address", addrClusterId);
+              }
+            }
+          };
+
+          if (centerType === "agent") {
+            addNode(centerId, "agent", 0);
+            const first = [...this.firstDegreeBorrowers(centerId)].sort();
+            const second = [...this.secondDegreeAgents(centerId)]
+              .sort((a, b) => this.firstDegreeBorrowers(b).size - this.firstDegreeBorrowers(a).size)
+              .slice(0, secondLimit);
+            const secondSet = new Set(second);
+            for (const borrowerId of first) {
+              addNode(borrowerId, "borrower", 1);
+              addEdge(centerId, borrowerId);
+              addContextNodes(centerId, borrowerId, 2);
+              for (const agentId of [...(this.borrowerToAgents.get(borrowerId) || [])].sort()) {
+                if (secondSet.has(agentId)) {
+                  addNode(agentId, "agent", 2);
+                  addEdge(agentId, borrowerId);
+                  addContextNodes(agentId, borrowerId, 3);
+                }
+              }
+            }
+            return {
+              center: { type: centerType, id: centerId, node_id: `agent:${centerId}` },
+              metrics: this.agentMetrics(centerId),
+              nodes: [...nodes.values()],
+              edges: [...edges].sort().map(splitEdge),
+            };
+          }
+
+          addNode(centerId, "borrower", 0);
+          const first = [...this.firstDegreeAgents(centerId)].sort();
+          const second = [...this.secondDegreeBorrowers(centerId)]
+            .sort((a, b) => this.secondDegreeOverdueRate(b, basis).second_degree_overdue_rate - this.secondDegreeOverdueRate(a, basis).second_degree_overdue_rate)
+            .slice(0, secondLimit);
+          const secondSet = new Set(second);
+          for (const agentId of first) {
+            addNode(agentId, "agent", 1);
+            addEdge(agentId, centerId);
+            addContextNodes(agentId, centerId, 2);
+            for (const borrowerId of [...(this.agentToBorrowers.get(agentId) || [])].sort()) {
+              if (secondSet.has(borrowerId)) {
+                addNode(borrowerId, "borrower", 2);
+                addEdge(agentId, borrowerId);
+                addContextNodes(agentId, borrowerId, 3);
+              }
+            }
+          }
+          return {
+            center: { type: centerType, id: centerId, node_id: `borrower:${centerId}` },
+            metrics: this.borrowerMetrics(centerId, basis),
+            nodes: [...nodes.values()],
+            edges: [...edges].sort().map(splitEdge),
+          };
+        }
+
+        defaultCenter(basis = this.overdueBasis) {
+          const borrowers = this.topBorrowers(basis, 1);
+          if (borrowers.length) return ["borrower", borrowers[0].borrower_id];
+          const agents = this.topAgents(1);
+          if (agents.length) return ["agent", agents[0].agent_id];
+          return ["borrower", ""];
+        }
+      }
+
+      async function parseUploadedFile(file) {
+        const suffix = file.name.toLowerCase().split(".").pop();
+        const buffer = await file.arrayBuffer();
+        if (suffix === "xlsx") return parseXlsx(buffer);
+        if (suffix === "xls") throw new Error("暂不支持旧版 .xls，请另存为 .xlsx 或 CSV。");
+        return parseCsv(decodeText(buffer));
+      }
+
+      function parseCsv(text) {
+        const rows = [];
+        let row = [];
+        let value = "";
+        let quoted = false;
+        for (let index = 0; index < text.length; index += 1) {
+          const char = text[index];
+          const next = text[index + 1];
+          if (quoted) {
+            if (char === '"' && next === '"') {
+              value += '"';
+              index += 1;
+            } else if (char === '"') {
+              quoted = false;
+            } else {
+              value += char;
+            }
+          } else if (char === '"') {
+            quoted = true;
+          } else if (char === ",") {
+            row.push(value);
+            value = "";
+          } else if (char === "\n") {
+            row.push(value);
+            rows.push(row);
+            row = [];
+            value = "";
+          } else if (char !== "\r") {
+            value += char;
+          }
+        }
+        row.push(value);
+        rows.push(row);
+        return rowsToObjects(rows);
+      }
+
+      async function parseXlsx(buffer) {
+        const files = await unzip(buffer);
+        const workbookXml = getZipText(files, "xl/workbook.xml");
+        const relsXml = getZipText(files, "xl/_rels/workbook.xml.rels");
+        const sharedStrings = parseSharedStrings(files.get("xl/sharedStrings.xml"));
+        const workbook = xml(workbookXml);
+        const rels = xml(relsXml);
+        const firstSheet = workbook.getElementsByTagName("sheet")[0];
+        if (!firstSheet) throw new Error("Excel 中没有可读取的工作表。");
+        const relId = firstSheet.getAttribute("r:id") || firstSheet.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
+        const rel = [...rels.getElementsByTagName("Relationship")].find((item) => item.getAttribute("Id") === relId);
+        if (!rel) throw new Error("Excel 工作表关系解析失败。");
+        const target = normalizeZipPath("xl", rel.getAttribute("Target") || "worksheets/sheet1.xml");
+        const sheetXml = getZipText(files, target);
+        return rowsToObjects(parseSheetRows(sheetXml, sharedStrings));
+      }
+
+      async function unzip(buffer) {
+        if (!("DecompressionStream" in window)) {
+          throw new Error("当前浏览器不支持本地解析 .xlsx，请使用最新版 Chrome、Edge、Safari，或上传 CSV。");
+        }
+        const bytes = new Uint8Array(buffer);
+        const eocd = findEndOfCentralDirectory(bytes);
+        const view = new DataView(bytes.buffer);
+        const entryCount = view.getUint16(eocd + 10, true);
+        let offset = view.getUint32(eocd + 16, true);
+        const decoder = new TextDecoder();
+        const files = new Map();
+        for (let index = 0; index < entryCount; index += 1) {
+          if (view.getUint32(offset, true) !== 0x02014b50) throw new Error("Excel ZIP 目录解析失败。");
+          const method = view.getUint16(offset + 10, true);
+          const compressedSize = view.getUint32(offset + 20, true);
+          const nameLength = view.getUint16(offset + 28, true);
+          const extraLength = view.getUint16(offset + 30, true);
+          const commentLength = view.getUint16(offset + 32, true);
+          const localOffset = view.getUint32(offset + 42, true);
+          const name = decoder.decode(bytes.slice(offset + 46, offset + 46 + nameLength));
+          const localNameLength = view.getUint16(localOffset + 26, true);
+          const localExtraLength = view.getUint16(localOffset + 28, true);
+          const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+          const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+          const content = method === 0 ? compressed : await inflateRaw(compressed);
+          files.set(name.replace(/^\/+/, ""), content);
+          offset += 46 + nameLength + extraLength + commentLength;
+        }
+        return files;
+      }
+
+      function findEndOfCentralDirectory(bytes) {
+        for (let index = bytes.length - 22; index >= 0; index -= 1) {
+          if (
+            bytes[index] === 0x50 &&
+            bytes[index + 1] === 0x4b &&
+            bytes[index + 2] === 0x05 &&
+            bytes[index + 3] === 0x06
+          ) {
+            return index;
+          }
+        }
+        throw new Error("未识别到有效的 .xlsx 文件结构。");
+      }
+
+      async function inflateRaw(bytes) {
+        const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+        return new Uint8Array(await new Response(stream).arrayBuffer());
+      }
+
+      function parseSharedStrings(content) {
+        if (!content) return [];
+        const doc = xml(new TextDecoder().decode(content));
+        return [...doc.getElementsByTagName("si")].map((item) => [...item.getElementsByTagName("t")].map((node) => node.textContent || "").join(""));
+      }
+
+      function parseSheetRows(sheetXml, sharedStrings) {
+        const doc = xml(sheetXml);
+        return [...doc.getElementsByTagName("row")].map((row) => {
+          const values = [];
+          for (const cell of row.getElementsByTagName("c")) {
+            const ref = cell.getAttribute("r") || "";
+            const column = columnIndex(ref.replace(/\d+/g, ""));
+            values[column] = readCell(cell, sharedStrings);
+          }
+          return values;
+        });
+      }
+
+      function readCell(cell, sharedStrings) {
+        const type = cell.getAttribute("t");
+        if (type === "inlineStr") return cell.getElementsByTagName("t")[0]?.textContent || "";
+        const value = cell.getElementsByTagName("v")[0]?.textContent || "";
+        if (type === "s") return sharedStrings[Number(value)] || "";
+        if (type === "b") return value === "1" ? "1" : "0";
+        return value;
+      }
+
+      function rowsToObjects(rows) {
+        const nonEmpty = rows.filter((row) => row.some((cell) => normalizeHeader(cell)));
+        if (!nonEmpty.length) return [];
+        const headers = nonEmpty[0].map(normalizeHeader);
+        return nonEmpty.slice(1).map((row) => {
+          const item = {};
+          headers.forEach((header, index) => {
+            if (header) item[header] = row[index] ?? "";
+          });
+          return item;
+        });
+      }
+
+      function decodeText(buffer) {
+        const bytes = new Uint8Array(buffer);
+        for (const encoding of ["utf-8", "gb18030", "gbk"]) {
+          try {
+            return new TextDecoder(encoding, { fatal: true }).decode(bytes).replace(/^\ufeff/, "");
+          } catch {
+            continue;
+          }
+        }
+        return new TextDecoder("utf-8").decode(bytes).replace(/^\ufeff/, "");
+      }
+
+      function getZipText(files, path) {
+        const value = files.get(path);
+        if (!value) throw new Error(`Excel 内缺少 ${path}`);
+        return new TextDecoder().decode(value);
+      }
+
+      function normalizeZipPath(base, target) {
+        if (target.startsWith("/")) return target.slice(1);
+        if (target.startsWith("xl/")) return target;
+        const parts = `${base}/${target}`.split("/");
+        const stack = [];
+        for (const part of parts) {
+          if (!part || part === ".") continue;
+          if (part === "..") stack.pop();
+          else stack.push(part);
+        }
+        return stack.join("/");
+      }
+
+      function xml(text) {
+        return new DOMParser().parseFromString(text, "application/xml");
+      }
+
+      function columnIndex(letters) {
+        let value = 0;
+        for (const char of letters) value = value * 26 + char.charCodeAt(0) - 64;
+        return Math.max(value - 1, 0);
+      }
+
+      function showProgress(percent, title, detail) {
+        if (!analysisProgress) return;
+        window.clearTimeout(progressHideTimer);
+        analysisProgress.hidden = false;
+        const value = Math.max(0, Math.min(100, Number(percent) || 0));
+        progressTitle.textContent = title;
+        progressText.textContent = detail;
+        progressBar.style.width = `${value}%`;
+        analysisProgress.querySelector(".progress-track")?.setAttribute("aria-valuenow", String(Math.round(value)));
+      }
+
+      function completeProgress(detail = "已完成") {
+        showProgress(100, "分析完成", detail);
+        progressHideTimer = window.setTimeout(hideProgress, 700);
+      }
+
+      function hideProgress() {
+        if (!analysisProgress) return;
+        window.clearTimeout(progressHideTimer);
+        progressBar.style.width = "0%";
+        analysisProgress.hidden = true;
+      }
+
+      function nextFrame() {
+        return new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+
+      function renderSummary(summary) {
+        const methodLabel = {
+          connected_components: "连通分量",
+          louvain: "Louvain",
+          leiden: "Leiden",
+        }[summary.community_method || state.communityMethod] || "连通分量";
+        const items = [
+          ["上传原始行数", formatNumber(summary.uploaded_row_count ?? summary.row_count)],
+          ["参与分析行数", formatNumber(summary.analyzed_row_count ?? summary.row_count)],
+          ["有效贷款数", formatNumber(summary.valid_loan_count)],
+          ["中介数", formatNumber(summary.agent_count)],
+          ["借款人数", formatNumber(summary.borrower_count)],
+          ["关系数", formatNumber(summary.relation_count)],
+          ["社区算法", methodLabel],
+          ["疑似团伙数", formatNumber(summary.community_count)],
+          [summary.community_size_label || "最大团伙规模", formatNumber(summary.max_community_size ?? summary.max_community_agents)],
+          ["整体逾期率", formatPercent(summary.overdue_rate)],
+        ];
+        if (summary.skipped_rows) items.push(["跳过行数", formatNumber(summary.skipped_rows), "warning"]);
+        if (summary.missing_columns?.length) items.push(["缺失字段", summary.missing_columns.length, "warning"]);
+        document.querySelector("#summaryCards").innerHTML = items.map(([label, value, tone]) => `
+          <div class="summary-card ${tone || ""}">
+            <span>${label}</span>
+            <strong>${value}</strong>
+          </div>
+        `).join("");
+      }
+
+      function renderFeatureTable(featureTable) {
+        const container = document.querySelector("#featureTable");
+        const subtitle = document.querySelector("#featureSubtitle");
+        if (!container) return;
+        const columns = featureTable?.columns || [];
+        const rows = featureTable?.rows || [];
+        subtitle.textContent = rows.length
+          ? `共 ${formatNumber(rows.length)} 行，${formatNumber(columns.length)} 列；页面预览前 100 行，导出为全量。`
+          : "上传数据后生成原始字段 + 加工特征";
+        if (!columns.length || !rows.length) {
+          container.innerHTML = "暂无数据";
+          container.classList.add("empty");
+          return;
+        }
+        container.classList.remove("empty");
+        container.innerHTML = `
+          <table>
+            <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+            <tbody>
+              ${rows.slice(0, 100).map((row) => `
+                <tr>${columns.map((column) => `<td>${formatCell(row[column])}</td>`).join("")}</tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+      }
+
+      function renderCommunityTable(rows) {
+        const container = document.querySelector("#communityTable");
+        if (!container) return;
+        if (!rows?.length) {
+          container.innerHTML = "<div class=\"empty\">暂无团伙</div>";
+          return;
+        }
+        container.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>团伙</th>
+                <th>类型</th>
+                <th>中介</th>
+                <th>借款人</th>
+                <th>坏账率</th>
+                <th>密度</th>
+                <th>风险分</th>
+                <th>中心中介</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((row) => `
+                <tr data-type="agent" data-id="${row.top_agents?.[0]?.agent_id || ""}">
+                  <td>${escapeHtml(row.community_id)}</td>
+                  <td>${row.community_type === "user" ? "用户社区" : "中介社区"}</td>
+                  <td>${formatNumber(row.agent_count)}</td>
+                  <td>${formatNumber(row.borrower_count)}</td>
+                  <td>${formatPercent(row.bad_debt_rate)}</td>
+                  <td>${formatPercent(row.density)}</td>
+                  <td>${formatNumber(row.risk_score)}</td>
+                  <td>${escapeHtml(row.top_agents?.[0]?.label || "-")}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+        bindTableRows("#communityTable");
+      }
+
+      function renderMetrics(graph) {
+        const metrics = graph.metrics || {};
+        const isAgent = graph.center?.type === "agent";
+        const items = isAgent
+          ? [
+              ["中介手机号", mask(graph.center.id)],
+              ["一度借款人数", formatNumber(metrics.first_degree_borrowers)],
+              ["二度中介数", formatNumber(metrics.second_degree_agents)],
+            ]
+          : [
+              ["借款人", mask(graph.center?.id || "")],
+              ["一度中介数", formatNumber(metrics.first_degree_agents)],
+              ["本人贷款数", formatNumber(metrics.loan_count)],
+              ["本人逾期笔数", formatNumber(metrics.own_overdue_loans)],
+              ["二度借款人数", formatNumber(metrics.second_degree_borrowers)],
+              ["二度贷款数", formatNumber(metrics.second_degree_loans)],
+              ["二度逾期笔数", formatNumber(metrics.second_degree_overdue_loans)],
+              ["二度借款逾期率", formatPercent(metrics.second_degree_overdue_rate)],
+            ];
+
+        document.querySelector("#centerMetrics").innerHTML = items.map(([label, value]) => `
+          <div class="metric-item">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+          </div>
+        `).join("");
+      }
+
+      function renderAgentTable(rows) {
+        document.querySelector("#agentTable").innerHTML = tableHtml(
+          ["中介", "一度借款人", "二度中介数"],
+          rows,
+          (row) => [row.label, row.first_degree_borrowers, row.second_degree_agents],
+          "agent",
+          "agent_id",
+        );
+        bindTableRows("#agentTable");
+      }
+
+      function renderBorrowerTable(rows) {
+        document.querySelector("#borrowerTable").innerHTML = tableHtml(
+          ["借款人", "一度中介", "二度借款人", "二度逾期率"],
+          rows,
+          (row) => [row.label, row.first_degree_agents, row.second_degree_borrowers, formatPercent(row.second_degree_overdue_rate)],
+          "borrower",
+          "borrower_id",
+        );
+        bindTableRows("#borrowerTable");
+      }
+
+      function tableHtml(headers, rows, mapper, type, idKey) {
+        if (!rows?.length) return "<div class=\"empty\">暂无数据</div>";
+        return `
+          <table>
+            <thead><tr>${headers.map((item) => `<th>${item}</th>`).join("")}</tr></thead>
+            <tbody>
+              ${rows.map((row) => `
+                <tr data-type="${type}" data-id="${row[idKey]}">
+                  ${mapper(row).map((value) => `<td>${escapeHtml(value)}</td>`).join("")}
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+      }
+
+      function bindTableRows(selector) {
+        document.querySelectorAll(`${selector} tbody tr`).forEach((row) => {
+          row.addEventListener("click", () => {
+            setCenterType(row.dataset.type);
+            centerInput.value = row.dataset.id;
+            queryGraph();
+          });
+        });
+      }
+
+      function renderGraph(graph) {
+        state.currentGraph = graph;
+        const container = document.querySelector("#graphCanvas");
+        const subtitle = document.querySelector("#graphSubtitle");
+        const nodes = graph.nodes || [];
+        const edges = graph.edges || [];
+        renderLegendControls();
+        if (!nodes.length) {
+          container.innerHTML = "<div class=\"empty\">上传数据后展示图谱</div>";
+          subtitle.textContent = "等待上传数据";
+          return;
+        }
+
+        const width = Math.max(920, container.clientWidth || 920);
+        const height = Math.max(560, container.clientHeight || 560);
+        const visibleNodes = nodes.filter((node) => !graphHiddenTypes.has(node.type));
+        const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
+        const visibleEdges = edges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+        const positioned = positionNodes(visibleNodes, width, height);
+        const byId = new Map(positioned.map((node) => [node.id, node]));
+        const centerLabel = graph.center.type === "agent" ? "中介" : "借款人";
+        subtitle.textContent = `${centerLabel} ${mask(graph.center.id)}，节点 ${visibleNodes.length}/${nodes.length}，边 ${visibleEdges.length}/${edges.length}`;
+
+        container.innerHTML = `
+          <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="二度关系图谱">
+            <g class="graph-edges">
+              ${visibleEdges.map((edge) => {
+                const source = byId.get(edge.source);
+                const target = byId.get(edge.target);
+                if (!source || !target) return "";
+                const relation = edge.relation || inferEdgeRelation(edge.source, edge.target);
+                const meta = edgeMeta(relation);
+                return `
+                  <line class="graph-edge" data-source="${edge.source}" data-target="${edge.target}" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" stroke="${meta.color}" stroke-width="${meta.width}">
+                    <title>${meta.label}</title>
+                  </line>
+                `;
+              }).join("")}
+            </g>
+            <g class="graph-nodes">
+              ${positioned.map((node) => nodeSvg(node, graph.center.node_id)).join("")}
+            </g>
+          </svg>
+        `;
+
+        bindGraphViewport(container.querySelector("svg"), width, height);
+        container.querySelector("svg")?.addEventListener("click", () => clearGraphHighlight(container));
+        container.querySelectorAll(".graph-node").forEach((group) => {
+          group.addEventListener("click", (event) => {
+            event.stopPropagation();
+            highlightNeighborhood(container, group.dataset.nodeId);
+          });
+          group.addEventListener("dblclick", (event) => {
+            event.stopPropagation();
+            setCenterType(group.dataset.type);
+            centerInput.value = group.dataset.rawId;
+            queryGraph();
+          });
+        });
+      }
+
+      function renderLegendControls() {
+        const legend = document.querySelector(".legend");
+        if (!legend) return;
+        const items = [
+          ["agent", "agent-dot", "中介"],
+          ["borrower", "borrower-dot", "借款人"],
+          ["device", "device-dot", "设备"],
+          ["ip", "ip-dot", "IP"],
+          ["address", "address-dot", "地址簇"],
+        ];
+        legend.innerHTML = `
+          ${items.map(([type, dot, label]) => `
+            <button class="legend-toggle ${graphHiddenTypes.has(type) ? "is-off" : ""}" type="button" data-type="${type}" aria-pressed="${!graphHiddenTypes.has(type)}">
+              <i class="${dot}"></i>${label}
+            </button>
+          `).join("")}
+          <span><i class="overdue-dot"></i>有逾期</span>
+        `;
+        legend.querySelectorAll(".legend-toggle").forEach((button) => {
+          button.addEventListener("click", () => {
+            const type = button.dataset.type;
+            if (graphHiddenTypes.has(type)) graphHiddenTypes.delete(type);
+            else graphHiddenTypes.add(type);
+            if (state.currentGraph) renderGraph(state.currentGraph);
+          });
+        });
+      }
+
+      function highlightNeighborhood(container, nodeId) {
+        const linked = new Set([nodeId]);
+        container.querySelectorAll(".graph-edge").forEach((edge) => {
+          if (edge.dataset.source === nodeId || edge.dataset.target === nodeId) {
+            linked.add(edge.dataset.source);
+            linked.add(edge.dataset.target);
+            edge.classList.add("is-highlighted");
+            edge.classList.remove("is-muted");
+          } else {
+            edge.classList.add("is-muted");
+            edge.classList.remove("is-highlighted");
+          }
+        });
+        container.querySelectorAll(".graph-node").forEach((node) => {
+          node.classList.toggle("is-highlighted", linked.has(node.dataset.nodeId));
+          node.classList.toggle("is-muted", !linked.has(node.dataset.nodeId));
+        });
+      }
+
+      function clearGraphHighlight(container) {
+        container.querySelectorAll(".is-muted, .is-highlighted").forEach((item) => {
+          item.classList.remove("is-muted", "is-highlighted");
+        });
+      }
+
+      function bindGraphViewport(svg, width, height) {
+        if (!svg) return;
+        const viewBox = { x: 0, y: 0, width, height };
+        const apply = () => svg.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+        svg.addEventListener("click", (event) => {
+          if (svg.dataset.dragged === "1") {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+        svg.addEventListener("wheel", (event) => {
+          event.preventDefault();
+          const scale = event.deltaY < 0 ? 0.86 : 1.16;
+          const nextWidth = Math.max(width * 0.22, Math.min(width * 3, viewBox.width * scale));
+          const nextHeight = Math.max(height * 0.22, Math.min(height * 3, viewBox.height * scale));
+          const rect = svg.getBoundingClientRect();
+          const px = (event.clientX - rect.left) / rect.width;
+          const py = (event.clientY - rect.top) / rect.height;
+          viewBox.x += (viewBox.width - nextWidth) * px;
+          viewBox.y += (viewBox.height - nextHeight) * py;
+          viewBox.width = nextWidth;
+          viewBox.height = nextHeight;
+          apply();
+        }, { passive: false });
+
+        let drag = null;
+        svg.addEventListener("pointerdown", (event) => {
+          drag = {
+            x: event.clientX,
+            y: event.clientY,
+            startX: viewBox.x,
+            startY: viewBox.y,
+            moved: false,
+          };
+          svg.classList.add("is-panning");
+          svg.setPointerCapture(event.pointerId);
+        });
+        svg.addEventListener("pointermove", (event) => {
+          if (!drag) return;
+          const rect = svg.getBoundingClientRect();
+          if (Math.abs(event.clientX - drag.x) > 3 || Math.abs(event.clientY - drag.y) > 3) {
+            drag.moved = true;
+          }
+          viewBox.x = drag.startX - ((event.clientX - drag.x) / rect.width) * viewBox.width;
+          viewBox.y = drag.startY - ((event.clientY - drag.y) / rect.height) * viewBox.height;
+          apply();
+        });
+        svg.addEventListener("pointerup", () => {
+          if (drag?.moved) {
+            svg.dataset.dragged = "1";
+            window.setTimeout(() => {
+              delete svg.dataset.dragged;
+            }, 0);
+          }
+          drag = null;
+          svg.classList.remove("is-panning");
+        });
+        svg.addEventListener("pointercancel", () => {
+          drag = null;
+          svg.classList.remove("is-panning");
+        });
+      }
+
+      function positionNodes(nodes, width, height) {
+        const cx = width / 2;
+        const cy = height / 2;
+        const groups = {
+          1: nodes.filter((node) => node.level === 1),
+          2: nodes.filter((node) => node.level >= 2),
+        };
+        const radiusOne = Math.min(width, height) * 0.23;
+        const radiusTwo = Math.min(width, height) * 0.42;
+
+        return nodes.map((node) => {
+          if (node.level === 0) return { ...node, x: cx, y: cy };
+          const ring = node.level === 1 ? groups[1] : groups[2];
+          const index = Math.max(ring.findIndex((item) => item.id === node.id), 0);
+          const count = Math.max(ring.length, 1);
+          const radius = node.level === 1 ? radiusOne : radiusTwo;
+          const angle = -Math.PI / 2 + (Math.PI * 2 * index) / count;
+          const wobble = node.level === 1 ? 0 : (index % 5) * 6;
+          return {
+            ...node,
+            x: cx + Math.cos(angle) * (radius + wobble),
+            y: cy + Math.sin(angle) * (radius + wobble),
+          };
+        });
+      }
+
+      function nodeSvg(node, centerNodeId) {
+        const isCenter = node.id === centerNodeId;
+        const colors = {
+          agent: ["var(--agent)", "var(--agent-soft)", "中"],
+          borrower: ["var(--borrower)", "var(--borrower-soft)", "借"],
+          device: ["#8b5bb5", "#eee5f6", "设"],
+          ip: ["#c78325", "#f7ead7", "IP"],
+          address: ["#596b78", "#e6ebef", "址"],
+        };
+        const [color, fill, mark] = colors[node.type] || ["#596b78", "#e6ebef", "?"];
+        const stroke = node.overdue ? "var(--risk)" : color;
+        const radius = isCenter ? 24 : node.level === 1 ? 18 : 14;
+        const labelY = node.y + radius + 15;
+        return `
+          <g class="graph-node" data-node-id="${node.id}" data-type="${node.type}" data-raw-id="${node.raw_id}">
+            <circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${fill}" stroke="${stroke}" stroke-width="${isCenter ? 4 : node.overdue ? 3 : 2}" />
+            <text x="${node.x}" y="${node.y + 4}" text-anchor="middle" font-size="${isCenter ? 13 : 11}" fill="${color}" font-weight="700">
+              ${mark}
+            </text>
+            <text class="graph-label" x="${node.x}" y="${labelY}" text-anchor="middle">${escapeHtml(node.label)}</text>
+          </g>
+        `;
+      }
+
+      function splitEdge(value) {
+        const [source, target, relation] = value.split("|");
+        return { source, target, relation };
+      }
+
+      function inferEdgeRelation(source, target) {
+        const sourceType = String(source).split(":", 1)[0];
+        const targetType = String(target).split(":", 1)[0];
+        return `${sourceType}_${targetType}`;
+      }
+
+      function edgeMeta(relation) {
+        const normalized = relation === "borrower_agent" ? "agent_borrower" : relation;
+        const meta = {
+          agent_borrower: { color: "#8aa0ad", width: 1.35, label: "中介-用户" },
+          borrower_device: { color: "#8b5bb5", width: 1.8, label: "用户-设备" },
+          borrower_ip: { color: "#c78325", width: 1.6, label: "用户-IP" },
+          agent_address: { color: "#596b78", width: 1.5, label: "中介-地址簇" },
+        };
+        return meta[normalized] || { color: "#b6c3cc", width: 1.2, label: "关联关系" };
+      }
+
+      function addToSetMap(map, key, value) {
+        if (!map.has(key)) map.set(key, new Set());
+        map.get(key).add(value);
+      }
+
+      function addToListMap(map, key, value) {
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(value);
+      }
+
+      function addToWeightedMap(map, key, neighbor, weight) {
+        if (!map.has(key)) map.set(key, new Map());
+        map.get(key).set(neighbor, weight);
+      }
+
+      function intersection(left, right) {
+        const result = new Set();
+        for (const value of left) {
+          if (right.has(value)) result.add(value);
+        }
+        return result;
+      }
+
+      function intersectionSize(left, right) {
+        let count = 0;
+        for (const value of left) {
+          if (right.has(value)) count += 1;
+        }
+        return count;
+      }
+
+      function sumMapValues(map) {
+        return [...map.values()].reduce((total, value) => total + value, 0);
+      }
+
+      function normalizePartitionIds(partition, prefix) {
+        const groups = new Map();
+        for (const [node, communityId] of Object.entries(partition)) addToSetMap(groups, communityId, node);
+        const orderedGroups = [...groups.values()].sort((left, right) => {
+          const sizeDiff = right.size - left.size;
+          if (sizeDiff) return sizeDiff;
+          return [...left].sort()[0].localeCompare([...right].sort()[0]);
+        });
+        const normalized = {};
+        orderedGroups.forEach((nodes, index) => {
+          const communityId = `${prefix}${String(index + 1).padStart(3, "0")}`;
+          for (const node of nodes) normalized[node] = communityId;
+        });
+        return normalized;
+      }
+
+      function normalizeHeader(value) {
+        return String(value ?? "").trim().replace(/^\ufeff/, "");
+      }
+
+      function normalizePhone(value) {
+        let text = String(value ?? "").trim();
+        if (!text || ["nan", "none", "null"].includes(text.toLowerCase())) return "";
+        if (/^\d+\.0$/.test(text)) text = text.slice(0, -2);
+        const digits = text.replace(/\D/g, "");
+        return digits || text;
+      }
+
+      function normalizeValue(value) {
+        const text = String(value ?? "").trim();
+        if (!text || ["nan", "none", "null"].includes(text.toLowerCase())) return "";
+        if (/^\d+\.0$/.test(text)) return text.slice(0, -2);
+        return text;
+      }
+
+      function getField(row, canonical) {
+        for (const column of FIELD_ALIASES[canonical] || [canonical]) {
+          if (row[column] !== undefined && row[column] !== null && row[column] !== "") return row[column];
+        }
+        return "";
+      }
+
+      function applyAliases(row) {
+        const result = { ...row };
+        for (const canonical of Object.keys(FIELD_ALIASES)) {
+          const value = getField(result, canonical);
+          if (value !== undefined && value !== null && value !== "") result[canonical] = value;
+        }
+        return result;
+      }
+
+      function filterRows(rows, reloanValue = "all", returnValue = "all") {
+        return rows.filter((row) => {
+          if (reloanValue !== "all" && normalizeValue(getField(row, RELOAN_COL)) !== reloanValue) return false;
+          if (returnValue !== "all" && normalizeValue(getField(row, RETURN_COL)) !== returnValue) return false;
+          return true;
+        });
+      }
+
+      function extractFilterValues(rows, column) {
+        return [...new Set(rows.map((row) => normalizeValue(getField(applyAliases(row), column))).filter(Boolean))]
+          .sort((left, right) => left.localeCompare(right, "zh-Hans-CN", { numeric: true }));
+      }
+
+      function updateReLoanOptions(values) {
+        if (!reloanFilter) return;
+        const selected = state.reloanFilter || "all";
+        const options = [
+          ["all", "全部"],
+          ...values.map((value) => [String(value), reloanLabel(value)]),
+        ];
+        reloanFilter.innerHTML = options
+          .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
+          .join("");
+        state.reloanFilter = values.map(String).includes(selected) ? selected : "all";
+        reloanFilter.value = state.reloanFilter;
+      }
+
+      function reloanLabel(value) {
+        const text = String(value ?? "");
+        if (text === "0") return "首贷 / 0";
+        if (text === "1") return "复贷 / 1";
+        return text || "空值";
+      }
+
+      function asBoolish(value) {
+        const text = String(value ?? "").trim().toLowerCase();
+        if (!text || ["0", "0.0", "false", "否", "无", "none", "null", "nan", "n", "no"].includes(text)) return false;
+        if (["1", "1.0", "true", "是", "有", "逾期", "y", "yes"].includes(text)) return true;
+        const number = Number(text);
+        return Number.isFinite(number) ? number > 0 : Boolean(text);
+      }
+
+      function formatNumber(value) {
+        return Number(value || 0).toLocaleString("zh-CN");
+      }
+
+      function formatPercent(value) {
+        return `${(Number(value || 0) * 100).toFixed(2)}%`;
+      }
+
+      function formatCell(value) {
+        if (typeof value === "number") return Number.isInteger(value) ? value : Number(value.toFixed(8));
+        return escapeHtml(value ?? "");
+      }
+
+      function mask(value) {
+        const text = String(value || "");
+        if (/^\d{7,}$/.test(text)) return `${text.slice(0, 3)}****${text.slice(-4)}`;
+        if (text.length > 8) return `${text.slice(0, 4)}...${text.slice(-4)}`;
+        return text;
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function exportFeatureTable(format) {
+        const { columns, rows } = state.featureTable || {};
+        if (!columns?.length || !rows?.length) {
+          showToast("暂无可导出的特征表");
+          return;
+        }
+        if (format === "xls") {
+          const html = `
+            <html>
+              <head><meta charset="utf-8" /></head>
+              <body>
+                <table>
+                  <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+                  <tbody>
+                    ${rows.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>`).join("")}
+                  </tbody>
+                </table>
+              </body>
+            </html>
+          `;
+          downloadBlob(`anti_fraud_features_${timestamp()}.xls`, html, "application/vnd.ms-excel;charset=utf-8");
+          return;
+        }
+        const csv = "\ufeff" + [
+          columns.map(csvEscape).join(","),
+          ...rows.map((row) => columns.map((column) => csvEscape(row[column])).join(",")),
+        ].join("\n");
+        downloadBlob(`anti_fraud_features_${timestamp()}.csv`, csv, "text/csv;charset=utf-8");
+      }
+
+      function csvEscape(value) {
+        const text = String(value ?? "");
+        if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+        return text;
+      }
+
+      function downloadBlob(filename, content, type) {
+        const blob = new Blob([content], { type });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      function timestamp() {
+        const date = new Date();
+        const pad = (value) => String(value).padStart(2, "0");
+        return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+      }
+
+      function debounce(fn, wait) {
+        let timer = 0;
+        return (...args) => {
+          window.clearTimeout(timer);
+          timer = window.setTimeout(() => fn(...args), wait);
+        };
+      }
+
+      function showToast(message) {
+        const old = document.querySelector(".toast");
+        if (old) old.remove();
+        const toast = document.createElement("div");
+        toast.className = "toast";
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        window.setTimeout(() => toast.remove(), 2800);
+      }
+    </script>
+  </body>
+</html>

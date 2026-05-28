@@ -1,0 +1,824 @@
+const state = {
+  datasetId: "",
+  centerType: "borrower",
+  centerId: "",
+  overdueBasis: "any",
+  communityMethod: "connected_components",
+  reloanFilter: "all",
+  returnFilter: "all",
+  lastFile: null,
+  lastFileName: "",
+  currentGraph: null,
+  featureTable: { columns: [], rows: [] },
+};
+const graphHiddenTypes = new Set();
+
+const fileInput = document.querySelector("#fileInput");
+const dropZone = document.querySelector("#dropZone");
+const overdueBasis = document.querySelector("#overdueBasis");
+const communityMethod = document.querySelector("#communityMethod");
+const reloanFilter = document.querySelector("#reloanFilter");
+const returnFilter = document.querySelector("#returnFilter");
+const borrowerMode = document.querySelector("#borrowerMode");
+const agentMode = document.querySelector("#agentMode");
+const centerInput = document.querySelector("#centerInput");
+const queryButton = document.querySelector("#queryButton");
+const exportCsvButton = document.querySelector("#exportCsvButton");
+const exportExcelButton = document.querySelector("#exportExcelButton");
+const analysisProgress = document.querySelector("#analysisProgress");
+const progressTitle = document.querySelector("#progressTitle");
+const progressText = document.querySelector("#progressText");
+const progressBar = document.querySelector("#progressBar");
+const navButtons = document.querySelectorAll(".nav-button");
+const views = document.querySelectorAll(".view");
+const appShell = document.querySelector(".app-shell");
+const navToggle = document.querySelector("#navToggle");
+const navExpand = document.querySelector("#navExpand");
+let progressHideTimer = 0;
+let progressPulseTimer = 0;
+let currentProgress = 0;
+
+navButtons.forEach((button) => {
+  button.addEventListener("click", () => switchView(button.dataset.view));
+});
+navToggle?.addEventListener("click", () => setNavHidden(true));
+navExpand?.addEventListener("click", () => setNavHidden(false));
+
+fileInput.addEventListener("change", () => {
+  if (fileInput.files[0]) analyzeFile(fileInput.files[0]);
+});
+
+dropZone.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  dropZone.classList.add("dragging");
+});
+
+dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragging"));
+
+dropZone.addEventListener("drop", (event) => {
+  event.preventDefault();
+  dropZone.classList.remove("dragging");
+  if (event.dataTransfer.files[0]) analyzeFile(event.dataTransfer.files[0]);
+});
+
+overdueBasis.addEventListener("change", () => {
+  state.overdueBasis = overdueBasis.value;
+  if (state.lastFile) analyzeFile(state.lastFile);
+});
+
+communityMethod?.addEventListener("change", () => {
+  state.communityMethod = communityMethod.value;
+  if (state.lastFile) analyzeFile(state.lastFile);
+});
+
+reloanFilter?.addEventListener("change", () => {
+  state.reloanFilter = reloanFilter.value;
+  if (state.lastFile) analyzeFile(state.lastFile);
+});
+
+returnFilter?.addEventListener("change", () => {
+  state.returnFilter = returnFilter.value;
+  if (state.lastFile) analyzeFile(state.lastFile);
+});
+
+borrowerMode.addEventListener("click", () => setCenterType("borrower"));
+agentMode.addEventListener("click", () => setCenterType("agent"));
+
+queryButton.addEventListener("click", queryGraph);
+centerInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") queryGraph();
+});
+
+centerInput.addEventListener("input", debounce(searchCenters, 240));
+exportCsvButton?.addEventListener("click", () => exportFeatureTable("csv"));
+exportExcelButton?.addEventListener("click", () => exportFeatureTable("xls"));
+
+function setCenterType(type) {
+  state.centerType = type;
+  borrowerMode.classList.toggle("active", type === "borrower");
+  agentMode.classList.toggle("active", type === "agent");
+}
+
+function switchView(viewId) {
+  navButtons.forEach((button) => button.classList.toggle("active", button.dataset.view === viewId));
+  views.forEach((view) => {
+    const isActive = view.id === viewId;
+    view.classList.toggle("active", isActive);
+    view.hidden = !isActive;
+  });
+}
+
+switchView("graphView");
+
+function setNavHidden(hidden) {
+  appShell?.classList.toggle("nav-hidden", hidden);
+  if (navExpand) navExpand.hidden = !hidden;
+}
+
+async function analyzeFile(file) {
+  if (state.lastFileName && state.lastFileName !== file.name) {
+    state.reloanFilter = "all";
+    if (reloanFilter) reloanFilter.value = "all";
+  }
+  state.lastFile = file;
+  state.lastFileName = file.name;
+  showProgress(6, "准备分析", "正在读取文件");
+  showToast("正在解析文件并计算二度指标...");
+  try {
+    const contentBase64 = await fileToBase64(file);
+    showProgress(28, "上传数据", "正在提交筛选条件和社区算法");
+    startProgressPulse(76, "计算中", "后端正在构建图谱、计算社区和特征宽表");
+    const response = await postJson("/api/analyze", {
+      filename: file.name,
+      content_base64: contentBase64,
+      overdue_basis: state.overdueBasis,
+      community_method: state.communityMethod,
+      reloan_filter: state.reloanFilter,
+      return_filter: state.returnFilter,
+    });
+    stopProgressPulse();
+    showProgress(82, "渲染结果", "正在刷新图谱、社区表和特征宽表");
+    state.datasetId = response.dataset_id;
+    state.centerType = response.graph.center?.type || "borrower";
+    state.centerId = response.graph.center?.id || "";
+    setCenterType(state.centerType);
+    centerInput.value = state.centerId;
+    renderAll(response);
+    completeProgress("分析完成");
+    showToast("分析完成");
+  } catch (error) {
+    stopProgressPulse();
+    hideProgress();
+    showToast(error.message || String(error));
+  }
+}
+
+async function queryGraph() {
+  if (!state.datasetId) {
+    showToast("请先上传数据文件");
+    return;
+  }
+  const centerId = centerInput.value.trim();
+  if (!centerId) {
+    showToast("请输入中心节点");
+    return;
+  }
+  try {
+    const response = await postJson("/api/graph", {
+      dataset_id: state.datasetId,
+      center_type: state.centerType,
+      center_id: centerId,
+      overdue_basis: state.overdueBasis,
+    });
+    state.centerId = response.graph.center.id;
+    renderGraph(response.graph);
+    renderMetrics(response.graph);
+  } catch (error) {
+    showToast(error.message || String(error));
+  }
+}
+
+async function searchCenters() {
+  if (!state.datasetId) return;
+  const query = centerInput.value.trim();
+  const container = document.querySelector("#searchResults");
+  if (!query) {
+    container.innerHTML = "";
+    return;
+  }
+  try {
+    const response = await postJson("/api/search", {
+      dataset_id: state.datasetId,
+      query,
+    });
+    const hits = [...response.borrowers, ...response.agents].slice(0, 8);
+    container.innerHTML = hits.map((hit) => `
+      <button class="search-hit" type="button" data-type="${hit.type}" data-id="${hit.id}">
+        ${hit.type === "agent" ? "中介" : "借款人"} ${hit.label}
+      </button>
+    `).join("");
+    container.querySelectorAll("button").forEach((button) => {
+      button.addEventListener("click", () => {
+        setCenterType(button.dataset.type);
+        centerInput.value = button.dataset.id;
+        queryGraph();
+      });
+    });
+  } catch {
+    container.innerHTML = "";
+  }
+}
+
+function renderAll(data) {
+  state.featureTable = data.feature_table || { columns: [], rows: [] };
+  updateReLoanOptions(data.filter_options?.reloan || []);
+  renderSummary(data.summary);
+  renderGraph(data.graph);
+  renderMetrics(data.graph);
+  renderCommunityTable(data.communities);
+  renderAgentTable(data.top_agents);
+  renderBorrowerTable(data.top_borrowers);
+  renderFeatureTable(state.featureTable);
+}
+
+function updateReLoanOptions(values) {
+  if (!reloanFilter) return;
+  const selected = state.reloanFilter || "all";
+  const options = [
+    ["all", "全部"],
+    ...values.map((value) => [String(value), reloanLabel(value)]),
+  ];
+  reloanFilter.innerHTML = options
+    .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
+    .join("");
+  state.reloanFilter = values.map(String).includes(selected) ? selected : "all";
+  reloanFilter.value = state.reloanFilter;
+}
+
+function reloanLabel(value) {
+  const text = String(value ?? "");
+  if (text === "0") return "首贷 / 0";
+  if (text === "1") return "复贷 / 1";
+  return text || "空值";
+}
+
+function showProgress(percent, title, detail) {
+  if (!analysisProgress) return;
+  window.clearTimeout(progressHideTimer);
+  analysisProgress.hidden = false;
+  const value = Math.max(0, Math.min(100, Number(percent) || 0));
+  currentProgress = value;
+  progressTitle.textContent = title;
+  progressText.textContent = detail;
+  progressBar.style.width = `${value}%`;
+  analysisProgress.querySelector(".progress-track")?.setAttribute("aria-valuenow", String(Math.round(value)));
+}
+
+function startProgressPulse(target, title, detail) {
+  stopProgressPulse();
+  progressPulseTimer = window.setInterval(() => {
+    if (currentProgress >= target) return;
+    const next = currentProgress + Math.max(0.6, (target - currentProgress) * 0.08);
+    showProgress(Math.min(target, next), title, detail);
+  }, 420);
+}
+
+function stopProgressPulse() {
+  window.clearInterval(progressPulseTimer);
+}
+
+function completeProgress(detail = "已完成") {
+  stopProgressPulse();
+  showProgress(100, "分析完成", detail);
+  progressHideTimer = window.setTimeout(hideProgress, 700);
+}
+
+function hideProgress() {
+  if (!analysisProgress) return;
+  window.clearTimeout(progressHideTimer);
+  stopProgressPulse();
+  progressBar.style.width = "0%";
+  analysisProgress.hidden = true;
+}
+
+function renderSummary(summary) {
+  const methodLabel = {
+    connected_components: "连通分量",
+    louvain: "Louvain",
+    leiden: "Leiden",
+  }[summary.community_method || state.communityMethod] || "连通分量";
+  const items = [
+    ["上传原始行数", formatNumber(summary.uploaded_row_count ?? summary.row_count)],
+    ["参与分析行数", formatNumber(summary.analyzed_row_count ?? summary.row_count)],
+    ["有效贷款数", formatNumber(summary.valid_loan_count)],
+    ["中介数", formatNumber(summary.agent_count)],
+    ["借款人数", formatNumber(summary.borrower_count)],
+    ["关系数", formatNumber(summary.relation_count)],
+    ["社区算法", methodLabel],
+    ["疑似团伙数", formatNumber(summary.community_count)],
+    [summary.community_size_label || "最大团伙规模", formatNumber(summary.max_community_size ?? summary.max_community_agents)],
+    ["整体逾期率", formatPercent(summary.overdue_rate)],
+  ];
+  if (summary.skipped_rows) items.push(["跳过行数", formatNumber(summary.skipped_rows), "warning"]);
+  if (summary.missing_columns?.length) items.push(["缺失字段", summary.missing_columns.length, "warning"]);
+  document.querySelector("#summaryCards").innerHTML = items.map(([label, value, tone]) => `
+    <div class="summary-card ${tone || ""}">
+      <span>${label}</span>
+      <strong>${value}</strong>
+    </div>
+  `).join("");
+}
+
+function renderMetrics(graph) {
+  const metrics = graph.metrics || {};
+  const isAgent = graph.center?.type === "agent";
+  const items = isAgent
+    ? [
+        ["中介手机号", mask(graph.center.id)],
+        ["一度借款人数", formatNumber(metrics.first_degree_borrowers)],
+        ["二度中介数", formatNumber(metrics.second_degree_agents)],
+      ]
+    : [
+        ["借款人", mask(graph.center?.id || "")],
+        ["一度中介数", formatNumber(metrics.first_degree_agents)],
+        ["本人贷款数", formatNumber(metrics.loan_count)],
+        ["本人逾期笔数", formatNumber(metrics.own_overdue_loans)],
+        ["二度借款人数", formatNumber(metrics.second_degree_borrowers)],
+        ["二度贷款数", formatNumber(metrics.second_degree_loans)],
+        ["二度逾期笔数", formatNumber(metrics.second_degree_overdue_loans)],
+        ["二度借款逾期率", formatPercent(metrics.second_degree_overdue_rate)],
+      ];
+
+  document.querySelector("#centerMetrics").innerHTML = items.map(([label, value]) => `
+    <div class="metric-item">
+      <span>${label}</span>
+      <strong>${value}</strong>
+    </div>
+  `).join("");
+}
+
+function renderFeatureTable(featureTable) {
+  const container = document.querySelector("#featureTable");
+  const subtitle = document.querySelector("#featureSubtitle");
+  if (!container) return;
+  const columns = featureTable?.columns || [];
+  const rows = featureTable?.rows || [];
+  subtitle.textContent = rows.length
+    ? `共 ${formatNumber(rows.length)} 行，${formatNumber(columns.length)} 列；页面预览前 100 行，导出为全量。`
+    : "上传数据后生成原始字段 + 加工特征";
+  if (!columns.length || !rows.length) {
+    container.innerHTML = "暂无数据";
+    container.classList.add("empty");
+    return;
+  }
+  container.classList.remove("empty");
+  const previewRows = rows.slice(0, 100);
+  container.innerHTML = `
+    <table>
+      <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+      <tbody>
+        ${previewRows.map((row) => `
+          <tr>${columns.map((column) => `<td>${formatCell(row[column])}</td>`).join("")}</tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderCommunityTable(rows) {
+  const container = document.querySelector("#communityTable");
+  if (!container) return;
+  if (!rows?.length) {
+    container.innerHTML = "<div class=\"empty\">暂无团伙</div>";
+    return;
+  }
+  container.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>团伙</th>
+          <th>类型</th>
+          <th>中介</th>
+          <th>借款人</th>
+          <th>坏账率</th>
+          <th>密度</th>
+          <th>风险分</th>
+          <th>中心中介</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => `
+          <tr data-type="agent" data-id="${row.top_agents?.[0]?.agent_id || ""}">
+            <td>${row.community_id}</td>
+            <td>${row.community_type === "user" ? "用户社区" : "中介社区"}</td>
+            <td>${formatNumber(row.agent_count)}</td>
+            <td>${formatNumber(row.borrower_count)}</td>
+            <td>${formatPercent(row.bad_debt_rate)}</td>
+            <td>${formatPercent(row.density)}</td>
+            <td>${formatNumber(row.risk_score)}</td>
+            <td>${row.top_agents?.[0]?.label || "-"}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  bindTableRows("#communityTable");
+}
+
+function renderAgentTable(rows) {
+  document.querySelector("#agentTable").innerHTML = tableHtml(
+    ["中介", "一度借款人", "二度中介数"],
+    rows,
+    (row) => [row.label, row.first_degree_borrowers, row.second_degree_agents],
+    "agent",
+    "agent_id",
+  );
+  bindTableRows("#agentTable");
+}
+
+function renderBorrowerTable(rows) {
+  document.querySelector("#borrowerTable").innerHTML = tableHtml(
+    ["借款人", "一度中介", "二度借款人", "二度逾期率"],
+    rows,
+    (row) => [row.label, row.first_degree_agents, row.second_degree_borrowers, formatPercent(row.second_degree_overdue_rate)],
+    "borrower",
+    "borrower_id",
+  );
+  bindTableRows("#borrowerTable");
+}
+
+function tableHtml(headers, rows, mapper, type, idKey) {
+  if (!rows?.length) return "<div class=\"empty\">暂无数据</div>";
+  return `
+    <table>
+      <thead><tr>${headers.map((item) => `<th>${item}</th>`).join("")}</tr></thead>
+      <tbody>
+        ${rows.map((row) => `
+          <tr data-type="${type}" data-id="${row[idKey]}">
+            ${mapper(row).map((value) => `<td>${value}</td>`).join("")}
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function bindTableRows(selector) {
+  document.querySelectorAll(`${selector} tbody tr`).forEach((row) => {
+    row.addEventListener("click", () => {
+      setCenterType(row.dataset.type);
+      centerInput.value = row.dataset.id;
+      queryGraph();
+    });
+  });
+}
+
+function renderGraph(graph) {
+  state.currentGraph = graph;
+  const container = document.querySelector("#graphCanvas");
+  const subtitle = document.querySelector("#graphSubtitle");
+  const nodes = graph.nodes || [];
+  const edges = graph.edges || [];
+  renderLegendControls();
+  if (!nodes.length) {
+    container.innerHTML = "<div class=\"empty\">上传数据后展示图谱</div>";
+    subtitle.textContent = "等待上传数据";
+    return;
+  }
+
+  const width = Math.max(920, container.clientWidth || 920);
+  const height = Math.max(560, container.clientHeight || 560);
+  const visibleNodes = nodes.filter((node) => !graphHiddenTypes.has(node.type));
+  const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
+  const visibleEdges = edges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+  const positioned = positionNodes(visibleNodes, width, height);
+  const byId = new Map(positioned.map((node) => [node.id, node]));
+  const centerLabel = graph.center.type === "agent" ? "中介" : "借款人";
+  subtitle.textContent = `${centerLabel} ${mask(graph.center.id)}，节点 ${visibleNodes.length}/${nodes.length}，边 ${visibleEdges.length}/${edges.length}`;
+
+  container.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="二度关系图谱">
+      <g class="graph-edges">
+        ${visibleEdges.map((edge) => {
+          const source = byId.get(edge.source);
+          const target = byId.get(edge.target);
+          if (!source || !target) return "";
+          const relation = edge.relation || inferEdgeRelation(edge.source, edge.target);
+          const meta = edgeMeta(relation);
+          return `
+            <line class="graph-edge" data-source="${edge.source}" data-target="${edge.target}" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" stroke="${meta.color}" stroke-width="${meta.width}">
+              <title>${meta.label}</title>
+            </line>
+          `;
+        }).join("")}
+      </g>
+      <g class="graph-nodes">
+        ${positioned.map((node) => nodeSvg(node, graph.center.node_id)).join("")}
+      </g>
+    </svg>
+  `;
+
+  bindGraphViewport(container.querySelector("svg"), width, height);
+  container.querySelector("svg")?.addEventListener("click", () => clearGraphHighlight(container));
+  container.querySelectorAll(".graph-node").forEach((group) => {
+    group.addEventListener("click", (event) => {
+      event.stopPropagation();
+      highlightNeighborhood(container, group.dataset.nodeId);
+    });
+    group.addEventListener("dblclick", (event) => {
+      event.stopPropagation();
+      setCenterType(group.dataset.type);
+      centerInput.value = group.dataset.rawId;
+      queryGraph();
+    });
+  });
+}
+
+function renderLegendControls() {
+  const legend = document.querySelector(".legend");
+  if (!legend) return;
+  const items = [
+    ["agent", "agent-dot", "中介"],
+    ["borrower", "borrower-dot", "借款人"],
+    ["device", "device-dot", "设备"],
+    ["ip", "ip-dot", "IP"],
+    ["address", "address-dot", "地址簇"],
+  ];
+  legend.innerHTML = `
+    ${items.map(([type, dot, label]) => `
+      <button class="legend-toggle ${graphHiddenTypes.has(type) ? "is-off" : ""}" type="button" data-type="${type}" aria-pressed="${!graphHiddenTypes.has(type)}">
+        <i class="${dot}"></i>${label}
+      </button>
+    `).join("")}
+    <span><i class="overdue-dot"></i>有逾期</span>
+  `;
+  legend.querySelectorAll(".legend-toggle").forEach((button) => {
+    button.addEventListener("click", () => {
+      const type = button.dataset.type;
+      if (graphHiddenTypes.has(type)) graphHiddenTypes.delete(type);
+      else graphHiddenTypes.add(type);
+      if (state.currentGraph) renderGraph(state.currentGraph);
+    });
+  });
+}
+
+function highlightNeighborhood(container, nodeId) {
+  const linked = new Set([nodeId]);
+  container.querySelectorAll(".graph-edge").forEach((edge) => {
+    if (edge.dataset.source === nodeId || edge.dataset.target === nodeId) {
+      linked.add(edge.dataset.source);
+      linked.add(edge.dataset.target);
+      edge.classList.add("is-highlighted");
+      edge.classList.remove("is-muted");
+    } else {
+      edge.classList.add("is-muted");
+      edge.classList.remove("is-highlighted");
+    }
+  });
+  container.querySelectorAll(".graph-node").forEach((node) => {
+    node.classList.toggle("is-highlighted", linked.has(node.dataset.nodeId));
+    node.classList.toggle("is-muted", !linked.has(node.dataset.nodeId));
+  });
+}
+
+function clearGraphHighlight(container) {
+  container.querySelectorAll(".is-muted, .is-highlighted").forEach((item) => {
+    item.classList.remove("is-muted", "is-highlighted");
+  });
+}
+
+function bindGraphViewport(svg, width, height) {
+  if (!svg) return;
+  const viewBox = { x: 0, y: 0, width, height };
+  const apply = () => svg.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+  svg.addEventListener("click", (event) => {
+    if (svg.dataset.dragged === "1") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+  svg.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const scale = event.deltaY < 0 ? 0.86 : 1.16;
+    const nextWidth = Math.max(width * 0.22, Math.min(width * 3, viewBox.width * scale));
+    const nextHeight = Math.max(height * 0.22, Math.min(height * 3, viewBox.height * scale));
+    const rect = svg.getBoundingClientRect();
+    const px = (event.clientX - rect.left) / rect.width;
+    const py = (event.clientY - rect.top) / rect.height;
+    viewBox.x += (viewBox.width - nextWidth) * px;
+    viewBox.y += (viewBox.height - nextHeight) * py;
+    viewBox.width = nextWidth;
+    viewBox.height = nextHeight;
+    apply();
+  }, { passive: false });
+
+  let drag = null;
+  svg.addEventListener("pointerdown", (event) => {
+    drag = {
+      x: event.clientX,
+      y: event.clientY,
+      startX: viewBox.x,
+      startY: viewBox.y,
+      moved: false,
+    };
+    svg.classList.add("is-panning");
+    svg.setPointerCapture(event.pointerId);
+  });
+  svg.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    const rect = svg.getBoundingClientRect();
+    if (Math.abs(event.clientX - drag.x) > 3 || Math.abs(event.clientY - drag.y) > 3) {
+      drag.moved = true;
+    }
+    viewBox.x = drag.startX - ((event.clientX - drag.x) / rect.width) * viewBox.width;
+    viewBox.y = drag.startY - ((event.clientY - drag.y) / rect.height) * viewBox.height;
+    apply();
+  });
+  svg.addEventListener("pointerup", () => {
+    if (drag?.moved) {
+      svg.dataset.dragged = "1";
+      window.setTimeout(() => {
+        delete svg.dataset.dragged;
+      }, 0);
+    }
+    drag = null;
+    svg.classList.remove("is-panning");
+  });
+  svg.addEventListener("pointercancel", () => {
+    drag = null;
+    svg.classList.remove("is-panning");
+  });
+}
+
+function inferEdgeRelation(source, target) {
+  const sourceType = String(source).split(":", 1)[0];
+  const targetType = String(target).split(":", 1)[0];
+  return `${sourceType}_${targetType}`;
+}
+
+function edgeMeta(relation) {
+  const normalized = relation === "borrower_agent" ? "agent_borrower" : relation;
+  const meta = {
+    agent_borrower: { color: "#8aa0ad", width: 1.35, label: "中介-用户" },
+    borrower_device: { color: "#8b5bb5", width: 1.8, label: "用户-设备" },
+    borrower_ip: { color: "#c78325", width: 1.6, label: "用户-IP" },
+    agent_address: { color: "#596b78", width: 1.5, label: "中介-地址簇" },
+  };
+  return meta[normalized] || { color: "#b6c3cc", width: 1.2, label: "关联关系" };
+}
+
+function positionNodes(nodes, width, height) {
+  const cx = width / 2;
+  const cy = height / 2;
+  const groups = {
+    0: nodes.filter((node) => node.level === 0),
+    1: nodes.filter((node) => node.level === 1),
+    2: nodes.filter((node) => node.level >= 2),
+  };
+  const radiusOne = Math.min(width, height) * 0.23;
+  const radiusTwo = Math.min(width, height) * 0.42;
+
+  return nodes.map((node) => {
+    if (node.level === 0) return { ...node, x: cx, y: cy };
+    const ring = node.level === 1 ? groups[1] : groups[2];
+    const index = ring.findIndex((item) => item.id === node.id);
+    const count = Math.max(ring.length, 1);
+    const radius = node.level === 1 ? radiusOne : radiusTwo;
+    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / count;
+    const wobble = node.level === 1 ? 0 : (index % 5) * 6;
+    return {
+      ...node,
+      x: cx + Math.cos(angle) * (radius + wobble),
+      y: cy + Math.sin(angle) * (radius + wobble),
+    };
+  });
+}
+
+function nodeSvg(node, centerNodeId) {
+  const isCenter = node.id === centerNodeId;
+  const colors = {
+    agent: ["var(--agent)", "var(--agent-soft)", "中"],
+    borrower: ["var(--borrower)", "var(--borrower-soft)", "借"],
+    device: ["#8b5bb5", "#eee5f6", "设"],
+    ip: ["#c78325", "#f7ead7", "IP"],
+    address: ["#596b78", "#e6ebef", "址"],
+  };
+  const [color, fill, mark] = colors[node.type] || ["#596b78", "#e6ebef", "?"];
+  const stroke = node.overdue ? "var(--risk)" : color;
+  const radius = isCenter ? 24 : node.level === 1 ? 18 : 14;
+  const labelY = node.y + radius + 15;
+  return `
+    <g class="graph-node" data-node-id="${node.id}" data-type="${node.type}" data-raw-id="${node.raw_id}">
+      <circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${fill}" stroke="${stroke}" stroke-width="${isCenter ? 4 : node.overdue ? 3 : 2}" />
+      <text x="${node.x}" y="${node.y + 4}" text-anchor="middle" font-size="${isCenter ? 13 : 11}" fill="${color}" font-weight="700">
+        ${mark}
+      </text>
+      <text class="graph-label" x="${node.x}" y="${labelY}" text-anchor="middle">${escapeHtml(node.label)}</text>
+    </g>
+  `;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function postJson(url, payload) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "请求失败");
+  return data;
+}
+
+function formatNumber(value) {
+  const number = Number(value || 0);
+  return number.toLocaleString("zh-CN");
+}
+
+function formatPercent(value) {
+  const number = Number(value || 0);
+  return `${(number * 100).toFixed(2)}%`;
+}
+
+function formatCell(value) {
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? value : Number(value.toFixed(8));
+  }
+  return escapeHtml(value ?? "");
+}
+
+function mask(value) {
+  const text = String(value || "");
+  if (/^\d{7,}$/.test(text)) return `${text.slice(0, 3)}****${text.slice(-4)}`;
+  if (text.length > 8) return `${text.slice(0, 4)}...${text.slice(-4)}`;
+  return text;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function exportFeatureTable(format) {
+  const { columns, rows } = state.featureTable || {};
+  if (!columns?.length || !rows?.length) {
+    showToast("暂无可导出的特征表");
+    return;
+  }
+  if (format === "xls") {
+    const html = `
+      <html>
+        <head><meta charset="utf-8" /></head>
+        <body>
+          <table>
+            <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+            <tbody>
+              ${rows.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>`).join("")}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `;
+    downloadBlob(`anti_fraud_features_${timestamp()}.xls`, html, "application/vnd.ms-excel;charset=utf-8");
+    return;
+  }
+  const csv = "\ufeff" + [
+    columns.map(csvEscape).join(","),
+    ...rows.map((row) => columns.map((column) => csvEscape(row[column])).join(",")),
+  ].join("\n");
+  downloadBlob(`anti_fraud_features_${timestamp()}.csv`, csv, "text/csv;charset=utf-8");
+}
+
+function csvEscape(value) {
+  const text = String(value ?? "");
+  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function downloadBlob(filename, content, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function timestamp() {
+  const date = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function debounce(fn, wait) {
+  let timer = 0;
+  return (...args) => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => fn(...args), wait);
+  };
+}
+
+function showToast(message) {
+  const old = document.querySelector(".toast");
+  if (old) old.remove();
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  window.setTimeout(() => toast.remove(), 2600);
+}

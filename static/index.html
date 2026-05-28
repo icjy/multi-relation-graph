@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>二度关系风险图谱</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="side-nav" aria-label="页面导航">
+        <div class="side-brand">
+          <strong>风控图谱</strong>
+          <span>ANTI-FRAUD</span>
+        </div>
+        <button id="navToggle" class="nav-collapse" type="button" aria-label="隐藏导航">-</button>
+        <button class="nav-button active" type="button" data-view="graphView">图谱分析</button>
+        <button class="nav-button" type="button" data-view="featureGuide">特征说明</button>
+      </aside>
+      <button id="navExpand" class="nav-expand" type="button" aria-label="显示导航" hidden>+</button>
+
+      <section id="graphView" class="workspace view active">
+        <header class="topbar">
+          <div>
+            <h1>多关系反欺诈图谱分析</h1>
+            <p>上传贷款明细，基于用户、中介、设备、IP、地址簇构建关系网络，识别疑似团伙并生成策略特征宽表。</p>
+          </div>
+          <label class="upload-button">
+            <input id="fileInput" type="file" accept=".csv,.xlsx,.xlsm,.xltx,.xltm" />
+            上传 CSV / Excel
+          </label>
+        </header>
+
+        <section id="dropZone" class="drop-zone">
+          <div class="drop-copy">
+            <strong>拖入文件开始分析</strong>
+            <span>字段需包含用户、收货手机号、设备、IP、地址簇、借款结果和逾期指标；支持首复贷、退货筛选。</span>
+          </div>
+        </section>
+
+        <section class="controls">
+          <label>
+            逾期口径
+            <select id="overdueBasis">
+              <option value="any">任一 fpd/cpd 逾期</option>
+              <option value="fpd1">fpd1</option>
+              <option value="fpd3">fpd3</option>
+              <option value="fpd7">fpd7</option>
+              <option value="fpd10">fpd10</option>
+              <option value="fpd30">fpd30</option>
+              <option value="cpd1">cpd1</option>
+              <option value="cpd7">cpd7</option>
+              <option value="cpd10">cpd10</option>
+              <option value="cpd30">cpd30</option>
+              <option value="spd10">spd10</option>
+              <option value="spd30">spd30</option>
+              <option value="tpd10">tpd10</option>
+              <option value="tpd30">tpd30</option>
+            </select>
+          </label>
+          <label>
+            社区算法
+            <select id="communityMethod">
+              <option value="connected_components">连通分量</option>
+              <option value="louvain">Louvain</option>
+              <option value="leiden">Leiden</option>
+            </select>
+          </label>
+          <label>
+            首复贷
+            <select id="reloanFilter">
+              <option value="all">全部</option>
+            </select>
+          </label>
+          <label>
+            是否退货
+            <select id="returnFilter">
+              <option value="all">全部</option>
+              <option value="0">未退货 / 0</option>
+              <option value="1">已退货 / 1</option>
+            </select>
+          </label>
+          <div class="segment" role="group" aria-label="中心节点类型">
+            <button id="borrowerMode" class="active" type="button">借款人</button>
+            <button id="agentMode" type="button">中介</button>
+          </div>
+          <label class="search-label">
+            中心节点
+            <input id="centerInput" type="search" placeholder="输入 app_user_id 或收货人手机号后回车" autocomplete="off" />
+          </label>
+          <button id="queryButton" class="primary" type="button">查询图谱</button>
+        </section>
+
+        <section id="analysisProgress" class="analysis-progress" aria-live="polite" hidden>
+          <div class="progress-copy">
+            <strong id="progressTitle">准备分析</strong>
+            <span id="progressText">等待任务开始</span>
+          </div>
+          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <span id="progressBar"></span>
+          </div>
+        </section>
+
+        <section id="summaryCards" class="summary-grid"></section>
+
+        <section class="graph-layout">
+          <div class="graph-panel">
+            <div class="panel-head">
+              <div>
+                <h2>关系图谱</h2>
+                <p id="graphSubtitle">等待上传数据</p>
+              </div>
+              <div class="legend">
+                <span><i class="agent-dot"></i>中介</span>
+                <span><i class="borrower-dot"></i>借款人</span>
+                <span><i class="device-dot"></i>设备</span>
+                <span><i class="ip-dot"></i>IP</span>
+                <span><i class="address-dot"></i>地址簇</span>
+                <span><i class="overdue-dot"></i>有逾期</span>
+              </div>
+            </div>
+            <div id="graphCanvas" class="graph-canvas"></div>
+          </div>
+
+          <aside class="metric-panel">
+            <h2>中心指标</h2>
+            <div id="centerMetrics" class="metric-list empty">暂无数据</div>
+            <div id="searchResults" class="search-results"></div>
+          </aside>
+        </section>
+
+        <section class="tables">
+          <article>
+            <h2>疑似中介团伙 Top</h2>
+            <div id="communityTable" class="table"></div>
+          </article>
+          <article>
+            <h2>二度中介数 Top</h2>
+            <div id="agentTable" class="table"></div>
+          </article>
+          <article>
+            <h2>二度借款逾期率 Top</h2>
+            <div id="borrowerTable" class="table"></div>
+          </article>
+        </section>
+
+        <section class="feature-section">
+          <div class="feature-head">
+            <div>
+              <h2>策略特征宽表</h2>
+              <p id="featureSubtitle">上传数据后生成原始字段 + 加工特征</p>
+            </div>
+            <div class="feature-actions">
+              <button id="exportCsvButton" class="secondary" type="button">导出 CSV</button>
+              <button id="exportExcelButton" class="secondary" type="button">导出 Excel</button>
+            </div>
+          </div>
+          <div id="featureTable" class="feature-table empty">暂无数据</div>
+        </section>
+      </section>
+
+      <section id="featureGuide" class="workspace view guide-view" hidden>
+        <header class="topbar">
+          <div>
+            <h1>特征说明</h1>
+            <p>策略特征宽表中新加工字段的计算口径。</p>
+          </div>
+        </header>
+
+        <section class="guide-section">
+          <h2>通用口径</h2>
+          <p>以下说明以宽表当前行为准：U 为当前行 app_user_id，A 为当前行 consigneeMobileId，C 为 addr_cluster_id，D 为 device_id，P 为 ip。</p>
+          <ul>
+            <li>申请笔数类字段统计筛选后的全量申请行。</li>
+            <li>贷款笔数和坏账率类字段只统计 final_result=30 的通过样本。</li>
+            <li>坏账率 = 通过样本中逾期笔数 / 通过样本总笔数。</li>
+            <li>关联人数、关联设备数、关联 IP 数、关联地址簇数均为去重计数。</li>
+            <li>页面上的逾期口径、首复贷、是否退货筛选会影响所有加工结果。</li>
+          </ul>
+        </section>
+
+        <section class="guide-grid">
+          <article class="guide-card">
+            <h2>中介维度</h2>
+            <dl>
+              <dt>收货人手机号关联人数</dt><dd>A 关联过的去重 app_user_id 数。</dd>
+              <dt>收货人手机号关联设备数</dt><dd>A 关联过的去重 device_id 数。</dd>
+              <dt>收货人手机号关联ip数</dt><dd>A 关联过的去重 ip 数。</dd>
+              <dt>收货人手机号关联地址簇数</dt><dd>A 关联过的去重 addr_cluster_id 数。</dd>
+              <dt>收货人手机号坏账率</dt><dd>A 关联记录中 final_result=30 且逾期的笔数 / A 关联记录中 final_result=30 的笔数。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>地址簇维度</h2>
+            <dl>
+              <dt>地址簇大小_地址数</dt><dd>C 下去重 receiverAddr / consigneeAddr 数。</dd>
+              <dt>地址簇关联人数</dt><dd>C 下去重 app_user_id 数。</dd>
+              <dt>地址簇关联收货人手机号数</dt><dd>C 下去重 consigneeMobileId 数。</dd>
+              <dt>地址簇关联设备数</dt><dd>C 下去重 device_id 数。</dd>
+              <dt>地址簇关联ip数</dt><dd>C 下去重 ip 数。</dd>
+              <dt>地址簇申请笔数</dt><dd>C 对应的全量申请行数。</dd>
+              <dt>地址簇坏账率</dt><dd>C 对应记录中 final_result=30 且逾期的笔数 / C 对应记录中 final_result=30 的笔数。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>设备维度</h2>
+            <dl>
+              <dt>设备关联人数</dt><dd>D 下去重 app_user_id 数。</dd>
+              <dt>设备关联地址簇数</dt><dd>D 下去重 addr_cluster_id 数。</dd>
+              <dt>设备关联收货手机号数</dt><dd>D 下去重 consigneeMobileId 数。</dd>
+              <dt>设备申请笔数</dt><dd>D 对应的全量申请行数。</dd>
+              <dt>设备坏账率</dt><dd>D 对应记录中 final_result=30 且逾期的笔数 / D 对应记录中 final_result=30 的笔数。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>IP 维度</h2>
+            <dl>
+              <dt>IP关联人数</dt><dd>P 下去重 app_user_id 数。</dd>
+              <dt>IP关联设备数</dt><dd>P 下去重 device_id 数。</dd>
+              <dt>IP申请笔数</dt><dd>P 对应的全量申请行数。</dd>
+              <dt>IP坏账率</dt><dd>P 对应记录中 final_result=30 且逾期的笔数 / P 对应记录中 final_result=30 的笔数。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>借款人自身</h2>
+            <dl>
+              <dt>借款人一度中介数</dt><dd>U 直接关联过的去重 consigneeMobileId 数。</dd>
+              <dt>借款人贷款笔数</dt><dd>U 对应记录中 final_result=30 的笔数。</dd>
+              <dt>借款人坏账率</dt><dd>U 对应记录中 final_result=30 且逾期的笔数 / U 对应记录中 final_result=30 的笔数。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>二度关系</h2>
+            <dl>
+              <dt>二度借款人数</dt><dd>U 的一度中介关联过的其他 app_user_id 去重数，去掉 U 自己。</dd>
+              <dt>二度中介数</dt><dd>A 的一度借款人关联过的其他 consigneeMobileId 去重数，去掉 A 自己。</dd>
+              <dt>二度设备数</dt><dd>U 的二度借款人集合下所有记录中的去重 device_id 数。</dd>
+              <dt>二度ip数</dt><dd>U 的二度借款人集合下所有记录中的去重 ip 数。</dd>
+              <dt>二度地址簇数</dt><dd>U 的二度借款人集合下所有记录中的去重 addr_cluster_id 数。</dd>
+              <dt>二度申请人数</dt><dd>U 的二度借款人集合中有申请记录的去重 app_user_id 数。</dd>
+              <dt>二度申请笔数</dt><dd>U 的二度借款人集合对应的全量申请行数。</dd>
+              <dt>二度贷款笔数</dt><dd>U 的二度借款人集合对应记录中 final_result=30 的笔数。</dd>
+              <dt>二度坏账率</dt><dd>U 的二度借款人集合对应记录中 final_result=30 且逾期的笔数 / final_result=30 的笔数。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>共享用户中介投影</h2>
+            <p>两个中介共享同一个 app_user_id 时连边，边权就是这两个中介共享的去重借款人数。</p>
+            <dl>
+              <dt>节点度数(共享用户)</dt><dd>A 直接连接的其他中介数量。</dd>
+              <dt>加权度数(共享用户)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联的去重 app_user_id 数。</dd>
+              <dt>PageRank分数(共享用户)</dt><dd>A 在共享用户中介投影图上的 PageRank。</dd>
+              <dt>中介中心性(共享用户)</dt><dd>A 在共享用户中介投影图上的介数中心性，衡量它是否位于其他中介之间的最短路径上。</dd>
+              <dt>连通子图大小(共享用户)</dt><dd>A 所在连通分量中的中介数量。</dd>
+              <dt>社区id(共享用户)</dt><dd>A 所在共享用户连通分量 ID。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>连通分量关系图</h2>
+            <p>两个中介通过共享用户、设备、IP、地址簇计算关系；首复贷选择不同，连边阈值不同。</p>
+            <dl>
+              <dt>仅首贷或复贷</dt><dd>共享Device >= 1，或共享User >= 1，或共享IP >= 2 且 IP人数 <= 20，或共享Addr >= 1。</dd>
+              <dt>全部数据</dt><dd>共享Device >= 1，或共享User >= 2，或共享IP >= 2 且 IP人数 <= 50，或共享Addr >= 1。</dd>
+              <dt>节点度数(连通分量关系)</dt><dd>A 在过滤后关系图上直接连接的其他中介数量。</dd>
+              <dt>加权度数(连通分量关系)</dt><dd>A 连到的每一条边权相加，边权 = 共享User*1.0 + 共享Device*1.2 + 共享IP*0.8 + 共享Addr*1.0。</dd>
+              <dt>PageRank分数(连通分量关系)</dt><dd>A 在过滤后关系图上的 PageRank。</dd>
+              <dt>中介中心性(连通分量关系)</dt><dd>A 在过滤后关系图上的介数中心性。</dd>
+              <dt>连通子图大小/社区id(连通分量关系)</dt><dd>A 所在过滤后中介连通分量的规模和 ID。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>单类关系中介投影</h2>
+            <dl>
+              <dt>节点度数(共享设备)</dt><dd>A 在共享设备图上直接连接的其他中介数量。</dd>
+              <dt>加权度数(共享设备)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人使用过的去重 device_id 数。</dd>
+              <dt>节点度数(共享IP)</dt><dd>A 在共享 IP 图上直接连接的其他中介数量。</dd>
+              <dt>加权度数(共享IP)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人使用过的去重 ip 数。</dd>
+              <dt>节点度数(共享地址簇)</dt><dd>A 在共享地址簇图上直接连接的其他中介数量。</dd>
+              <dt>加权度数(共享地址簇)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人出现过的去重 addr_cluster_id 数。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>多关系中介投影</h2>
+            <p>多关系边权 = 1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</p>
+            <dl>
+              <dt>节点度数(多关系)</dt><dd>A 在多关系图上直接连接的其他中介数量。</dd>
+              <dt>加权度数(多关系)</dt><dd>A 连到的每一条边权相加，边权 = 1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
+              <dt>PageRank分数(多关系)</dt><dd>A 在多关系图上的 PageRank。</dd>
+              <dt>中介中心性(多关系)</dt><dd>A 在多关系图上的介数中心性。</dd>
+              <dt>连通子图大小(多关系)</dt><dd>A 所在多关系连通分量中的中介数量。</dd>
+              <dt>社区id(多关系)</dt><dd>A 所在多关系连通分量 ID。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>边权与 PageRank</h2>
+            <dl>
+              <dt>Agent 多关系边权</dt><dd>1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
+              <dt>User 同构图边权</dt><dd>1.0 * 共享中介数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
+              <dt>PageRank 公式</dt><dd>PR(v) = (1-d)/N + d*Dangling/N + d*Σ PR(u)*w(u,v)/Σw(u,x)，d=0.85，迭代 40 轮。</dd>
+              <dt>符号说明</dt><dd>N 为节点数，w 为边权，Dangling 为无出边节点 PageRank 之和。</dd>
+            </dl>
+          </article>
+
+          <article class="guide-card">
+            <h2>社区特征</h2>
+            <p>连通分量时社区为过滤后关系图中的中介连通分量；Louvain / Leiden 时通用社区字段仍为用户同构图社区，宽表会额外生成未过滤 Agent-Agent 多关系图社区字段。</p>
+            <dl>
+              <dt>社区id</dt><dd>当前行命中的社区 ID。</dd>
+              <dt>社区规模</dt><dd>连通分量口径下为社区中介数；Louvain / Leiden 下为用户社区借款人数。</dd>
+              <dt>社区借款人数</dt><dd>社区覆盖的去重 app_user_id 数。</dd>
+              <dt>社区贷款笔数</dt><dd>社区覆盖记录中 final_result=30 的笔数。</dd>
+              <dt>社区坏账率</dt><dd>社区覆盖记录中 final_result=30 且逾期的笔数 / final_result=30 的笔数。</dd>
+              <dt>社区设备密度</dt><dd>社区内部节点两两共享设备形成的边数 / 理论最大边数。</dd>
+              <dt>社区ip密度</dt><dd>社区内部节点两两共享 IP 形成的边数 / 理论最大边数。</dd>
+              <dt>社区地址密度</dt><dd>社区内部节点两两共享地址簇形成的边数 / 理论最大边数。</dd>
+              <dt>社区共享借款人数</dt><dd>连通分量口径下，社区内被至少两个中介共享的借款人数；Louvain / Leiden 用户社区口径下当前为 0。</dd>
+              <dt>社区风险分</dt><dd>由坏账率、网络密度、设备/IP/地址密度等组合得到的解释性排序分，不是模型概率。</dd>
+              <dt>...(Agent)</dt><dd>选择 Louvain / Leiden 时，基于未过滤 Agent-Agent 多关系图同步生成的中介社区字段。</dd>
+              <dt>Agent 风险分</dt><dd>min(100, round(坏账率*55 + 网络密度*20 + min(共享借款人占比,1)*15 + min(中介数/10,1)*10, 2))。</dd>
+              <dt>User 风险分</dt><dd>min(100, round(坏账率*55 + 用户网络密度*15 + 设备密度*10 + IP密度*10 + 地址密度*10, 2))。</dd>
+            </dl>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
