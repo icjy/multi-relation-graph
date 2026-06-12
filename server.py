@@ -93,7 +93,7 @@ FIELD_ALIASES = {
     FINAL_RESULT_COL: (FINAL_RESULT_COL,),
 }
 
-DATASETS: dict[str, "RiskGraph"] = {}
+DATASETS: dict[str, dict[str, Any]] = {}
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
@@ -203,6 +203,110 @@ def filter_values(rows: list[dict[str, Any]], canonical: str) -> list[str]:
     return sorted(values, key=lambda value: (value.lower(), value))
 
 
+def build_filter_options(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    return {
+        "reloan": filter_values(rows, RELOAN_COL),
+        "return": filter_values(rows, RETURN_COL),
+        "final_result": filter_values(rows, FINAL_RESULT_COL),
+    }
+
+
+def complex_query_rows(
+    rows: list[dict[str, Any]],
+    filters: dict[str, Any] | None = None,
+    query_values: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    filters = filters or {}
+    query_values = query_values or {}
+    query_fields = {
+        "app_user_id": BORROWER_COL,
+        "consigneeMobileId": AGENT_COL,
+        "device_id": DEVICE_COL,
+        "ip": IP_COL,
+        "addr_cluster_id": ADDR_CLUSTER_COL,
+    }
+    parsed_values = {
+        field: {
+            normalize_value(item)
+            for item in str(raw_value or "").split("|")
+            if normalize_value(item)
+        }
+        for field, raw_value in query_values.items()
+        if field in query_fields
+    }
+    parsed_values = {field: values for field, values in parsed_values.items() if values}
+    input_counts = {field: len(values) for field, values in parsed_values.items()}
+    matched_values = {field: set() for field in parsed_values}
+
+    def filter_match(row: dict[str, Any]) -> bool:
+        checks = (
+            (RELOAN_COL, filters.get("reloan_flag")),
+            (RETURN_COL, filters.get("return_flag")),
+            (FINAL_RESULT_COL, filters.get("final_result")),
+        )
+        for canonical, expected in checks:
+            expected = normalize_value(expected or "all")
+            if expected != "all" and normalize_value(get_field(row, canonical)) != expected:
+                return False
+        return True
+
+    def query_match(row: dict[str, Any]) -> bool:
+        if not parsed_values:
+            return True
+        matched = False
+        for field, values in parsed_values.items():
+            canonical = query_fields[field]
+            value = normalize_value(get_field(row, canonical))
+            if value and value in values:
+                matched_values[field].add(value)
+                matched = True
+        return matched
+
+    matched_rows = [row for row in rows if filter_match(row) and query_match(row)]
+    aliased_rows = [apply_aliases(row) for row in matched_rows]
+
+    def distinct_count(canonical: str) -> int:
+        return len({
+            normalize_value(get_field(row, canonical))
+            for row in aliased_rows
+            if normalize_value(get_field(row, canonical))
+        })
+
+    def distinct_raw(column: str) -> int:
+        return len({
+            normalize_value(row.get(column))
+            for row in matched_rows
+            if normalize_value(row.get(column))
+        })
+
+    unmatched_values = {
+        field: sorted(values - matched_values.get(field, set()), key=lambda item: (item.lower(), item))
+        for field, values in parsed_values.items()
+    }
+    matched_value_counts = {field: len(matched_values.get(field, set())) for field in parsed_values}
+
+    summary = {
+        "row_count": len(matched_rows),
+        "loan_task_id_count": distinct_raw("loan_task_id"),
+        "borrower_count": distinct_count(BORROWER_COL),
+        "agent_count": distinct_count(AGENT_COL),
+        "device_count": distinct_count(DEVICE_COL),
+        "ip_count": distinct_count(IP_COL),
+        "addr_cluster_count": distinct_count(ADDR_CLUSTER_COL),
+        "raw_address_count": distinct_raw("consigneeAddr"),
+        "clean_address_count": distinct_raw("receiverAddr"),
+    }
+    columns = list(rows[0].keys()) if rows else []
+    return {
+        "columns": columns,
+        "rows": [{key: json_safe_value(value) for key, value in row.items()} for row in matched_rows],
+        "summary": summary,
+        "input_counts": input_counts,
+        "matched_value_counts": matched_value_counts,
+        "unmatched_values": unmatched_values,
+    }
+
+
 def as_boolish(value: Any) -> bool:
     if value is None:
         return False
@@ -278,12 +382,14 @@ class RiskGraph:
         self.overdue_basis = overdue_basis
         self.reloan_filter = normalize_value(reloan_filter or "all")
         self.agent_to_borrowers: dict[str, set[str]] = defaultdict(set)
+        self.agent_direct_attributes: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
         self.borrower_to_agents: dict[str, set[str]] = defaultdict(set)
         self.loans_by_borrower: dict[str, list[dict[str, Any]]] = defaultdict(list)
         self.loan_rows: list[dict[str, Any]] = []
         self.skipped_rows = 0
         self.source_columns = list(rows[0].keys()) if rows else []
         self.columns = sorted({column for row in rows for column in row})
+        self._agent_relation_counts_cache: dict[int, dict[tuple[str, str], dict[str, int]]] = {}
         self._build()
 
     def _build(self) -> None:
@@ -307,9 +413,29 @@ class RiskGraph:
             self.borrower_to_agents[borrower_id].add(agent_id)
             self.loans_by_borrower[borrower_id].append(clean_row)
             self.loan_rows.append(clean_row)
+            for column in (DEVICE_COL, IP_COL, ADDR_CLUSTER_COL):
+                value = normalize_value(clean_row.get(column))
+                if value:
+                    self.agent_direct_attributes[agent_id][column].add(value)
 
     def distinct_from_loans(self, loans: list[dict[str, Any]], column: str) -> set[str]:
         return {normalize_value(loan.get(column)) for loan in loans if normalize_value(loan.get(column))}
+
+    def loan_group_stats(self, loans: list[dict[str, Any]], basis: str | None = None) -> dict[str, Any]:
+        funded = self.funded_loans(loans)
+        overdue = sum(1 for loan in funded if self.is_overdue(loan, basis))
+        return {
+            "borrowers": self.distinct_from_loans(loans, BORROWER_COL),
+            "agents": self.distinct_from_loans(loans, AGENT_COL),
+            "devices": self.distinct_from_loans(loans, DEVICE_COL),
+            "ips": self.distinct_from_loans(loans, IP_COL),
+            "addr_clusters": self.distinct_from_loans(loans, ADDR_CLUSTER_COL),
+            "addresses": self.distinct_from_loans(loans, ADDRESS_COL),
+            "application_count": len(loans),
+            "loan_count": len(funded),
+            "overdue_loan_count": overdue,
+            "bad_rate": overdue / len(funded) if funded else 0.0,
+        }
 
     def bad_rate(self, loans: list[dict[str, Any]], basis: str | None = None) -> float:
         funded = self.funded_loans(loans)
@@ -426,16 +552,13 @@ class RiskGraph:
     def agent_attribute_sets(self, column: str) -> dict[str, set[str]]:
         if column == BORROWER_COL:
             return {agent_id: set(borrowers) for agent_id, borrowers in self.agent_to_borrowers.items()}
-        result: dict[str, set[str]] = {}
-        for agent_id, borrowers in self.agent_to_borrowers.items():
-            values: set[str] = set()
-            for borrower_id in borrowers:
-                for loan in self.loans_by_borrower.get(borrower_id, []):
-                    value = normalize_value(loan.get(column))
-                    if value:
-                        values.add(value)
-            result[agent_id] = values
-        return result
+        return {agent_id: set(self.agent_direct_attributes.get(agent_id, {}).get(column, set())) for agent_id in self.agent_to_borrowers}
+
+    def agent_direct_values(self, agent_id: str, column: str) -> set[str]:
+        return set(self.agent_direct_attributes.get(agent_id, {}).get(column, set()))
+
+    def shared_agent_values(self, left: str, right: str, column: str) -> set[str]:
+        return self.agent_direct_values(left, column) & self.agent_direct_values(right, column)
 
     def connected_component_rule(self) -> dict[str, int]:
         if self.reloan_filter == "all":
@@ -445,6 +568,8 @@ class RiskGraph:
     def agent_relation_counts(self, ip_borrower_limit: int | None = None) -> dict[tuple[str, str], dict[str, int]]:
         if ip_borrower_limit is None:
             ip_borrower_limit = self.connected_component_rule()["ip_borrower_limit"]
+        if ip_borrower_limit in self._agent_relation_counts_cache:
+            return self._agent_relation_counts_cache[ip_borrower_limit]
         agents = sorted(self.agent_to_borrowers)
         borrower_sets = self.agent_attribute_sets(BORROWER_COL)
         device_sets = self.agent_attribute_sets(DEVICE_COL)
@@ -461,18 +586,19 @@ class RiskGraph:
         counts: dict[tuple[str, str], dict[str, int]] = {}
         for left, right in combinations(agents, 2):
             shared_user = len(borrower_sets.get(left, set()) & borrower_sets.get(right, set()))
-            shared_device = len(device_sets.get(left, set()) & device_sets.get(right, set()))
+            shared_device_values = device_sets.get(left, set()) & device_sets.get(right, set())
             shared_ip_all = ip_sets.get(left, set()) & ip_sets.get(right, set())
             shared_ip = len(shared_ip_all & eligible_ips)
-            shared_addr = len(addr_sets.get(left, set()) & addr_sets.get(right, set()))
-            if shared_user or shared_device or shared_ip_all or shared_addr:
+            shared_addr_values = addr_sets.get(left, set()) & addr_sets.get(right, set())
+            if shared_user or shared_device_values or shared_ip_all or shared_addr_values:
                 counts[(left, right)] = {
                     "user": shared_user,
-                    "device": shared_device,
+                    "device": len(shared_device_values),
                     "ip": shared_ip,
                     "ip_all": len(shared_ip_all),
-                    "address": shared_addr,
+                    "address": len(shared_addr_values),
                 }
+        self._agent_relation_counts_cache[ip_borrower_limit] = counts
         return counts
 
     def filtered_agent_projection(self) -> dict[str, dict[str, float]]:
@@ -548,21 +674,37 @@ class RiskGraph:
         if not nodes:
             return {}
         n = len(nodes)
-        scores = {node: 1 / n for node in nodes}
+        node_index = {node: index for index, node in enumerate(nodes)}
+        scores = [1 / n] * n
+        transitions: list[list[tuple[int, float]]] = []
+        dangling_indices: list[int] = []
+        for node in nodes:
+            neighbors = adjacency.get(node, {})
+            weight_sum = sum(neighbors.values())
+            if not weight_sum:
+                transitions.append([])
+                dangling_indices.append(node_index[node])
+                continue
+            transitions.append(
+                [
+                    (node_index[neighbor], float(weight) / weight_sum)
+                    for neighbor, weight in neighbors.items()
+                    if neighbor in node_index
+                ]
+            )
+        base_score = (1 - damping) / n
         for _ in range(iterations):
-            next_scores = {node: (1 - damping) / n for node in nodes}
-            dangling = sum(scores[node] for node in nodes if not adjacency.get(node))
+            dangling = sum(scores[index] for index in dangling_indices)
             dangling_share = damping * dangling / n
-            for node in nodes:
-                next_scores[node] += dangling_share
-                neighbors = adjacency.get(node, {})
-                weight_sum = sum(neighbors.values())
-                if not weight_sum:
+            next_scores = [base_score + dangling_share] * n
+            for index, neighbors in enumerate(transitions):
+                if not neighbors:
                     continue
-                for neighbor, weight in neighbors.items():
-                    next_scores[neighbor] = next_scores.get(neighbor, (1 - damping) / n) + damping * scores[node] * weight / weight_sum
+                contribution = damping * scores[index]
+                for neighbor_index, probability in neighbors:
+                    next_scores[neighbor_index] += contribution * probability
             scores = next_scores
-        return scores
+        return dict(zip(nodes, scores))
 
     def user_projection(self) -> dict[str, dict[str, float]]:
         value_to_borrowers: dict[tuple[str, str], set[str]] = defaultdict(set)
@@ -830,12 +972,10 @@ class RiskGraph:
         if not possible_edges:
             return 0.0
         value_to_agents: dict[str, set[str]] = defaultdict(set)
-        for loan in self.loan_rows:
-            agent_id = normalize_phone(loan.get(AGENT_COL))
-            value = normalize_value(loan.get(column))
-            if agent_id in agents and value:
+        for agent_id in agents:
+            for value in self.agent_direct_attributes.get(agent_id, {}).get(column, set()):
                 value_to_agents[value].add(agent_id)
-        edges: set[tuple[str, str, str]] = set()
+        edges: set[tuple[str, str]] = set()
         for linked_agents in value_to_agents.values():
             for left, right in combinations(sorted(linked_agents), 2):
                 edges.add((left, right))
@@ -1205,11 +1345,57 @@ class RiskGraph:
             if ip:
                 loans_by_ip[ip].append(loan)
 
+        agent_stats = {key: self.loan_group_stats(value, basis) for key, value in loans_by_agent.items()}
+        addr_stats = {key: self.loan_group_stats(value, basis) for key, value in loans_by_addr_cluster.items()}
+        device_stats = {key: self.loan_group_stats(value, basis) for key, value in loans_by_device.items()}
+        ip_stats = {key: self.loan_group_stats(value, basis) for key, value in loans_by_ip.items()}
+        borrower_funded_loans_by_id = {
+            borrower_id: self.funded_loans(loans)
+            for borrower_id, loans in self.loans_by_borrower.items()
+        }
+        borrower_bad_rate_by_id = {
+            borrower_id: self.bad_rate(funded_loans, basis)
+            for borrower_id, funded_loans in borrower_funded_loans_by_id.items()
+        }
+        second_degree_cache: dict[str, dict[str, Any]] = {}
+
+        def second_degree_stats(borrower_id: str) -> dict[str, Any]:
+            if borrower_id in second_degree_cache:
+                return second_degree_cache[borrower_id]
+            borrowers = self.second_degree_borrowers(borrower_id)
+            loans = self.loans_for_borrowers(borrowers)
+            funded = self.funded_loans(loans)
+            stats = {
+                "borrowers": borrowers,
+                "loans": loans,
+                "funded_loans": funded,
+                "devices": self.distinct_from_loans(loans, DEVICE_COL),
+                "ips": self.distinct_from_loans(loans, IP_COL),
+                "addr_clusters": self.distinct_from_loans(loans, ADDR_CLUSTER_COL),
+                "application_borrowers": {loan_item[BORROWER_COL] for loan_item in loans if loan_item.get(BORROWER_COL)},
+                "bad_rate": self.bad_rate(funded, basis),
+            }
+            second_degree_cache[borrower_id] = stats
+            return stats
+
         graph_features = self.community_feature_index(basis, community_method)
         agent_features = graph_features["agent_features"]
         community_by_agent = graph_features["community_by_agent"]
         community_by_borrower = graph_features["community_by_borrower"]
         agent_community_by_agent = graph_features["agent_community_by_agent"]
+        selected_community_suffix = "User" if community_method in {"louvain", "leiden"} else "Agent"
+        selected_community_columns = [
+            f"社区id({selected_community_suffix})",
+            f"社区规模({selected_community_suffix})",
+            f"社区借款人数({selected_community_suffix})",
+            f"社区贷款笔数({selected_community_suffix})",
+            f"社区坏账率({selected_community_suffix})",
+            f"社区设备密度({selected_community_suffix})",
+            f"社区ip密度({selected_community_suffix})",
+            f"社区地址密度({selected_community_suffix})",
+            f"社区共享借款人数({selected_community_suffix})",
+            f"社区风险分({selected_community_suffix})",
+        ]
 
         feature_columns = [
             "地址簇大小_地址数",
@@ -1269,16 +1455,7 @@ class RiskGraph:
             "中介中心性(多关系)",
             "连通子图大小(多关系)",
             "社区id(多关系)",
-            "社区id",
-            "社区规模",
-            "社区借款人数",
-            "社区贷款笔数",
-            "社区坏账率",
-            "社区设备密度",
-            "社区ip密度",
-            "社区地址密度",
-            "社区共享借款人数",
-            "社区风险分",
+            *selected_community_columns,
         ]
         if community_method in {"louvain", "leiden"}:
             feature_columns += [
@@ -1306,16 +1483,16 @@ class RiskGraph:
             device_id = normalize_value(loan.get(DEVICE_COL))
             ip = normalize_value(loan.get(IP_COL))
 
-            agent_loans = loans_by_agent.get(agent_id, [])
-            addr_loans = loans_by_addr_cluster.get(addr_cluster_id, [])
-            device_loans = loans_by_device.get(device_id, [])
-            ip_loans = loans_by_ip.get(ip, [])
-
-            second_borrowers = self.second_degree_borrowers(borrower_id)
+            agent_stat = agent_stats.get(agent_id, {})
+            addr_stat = addr_stats.get(addr_cluster_id, {})
+            device_stat = device_stats.get(device_id, {})
+            ip_stat = ip_stats.get(ip, {})
+            second_stat = second_degree_stats(borrower_id)
+            second_borrowers = second_stat["borrowers"]
             second_agents = self.second_degree_agents(agent_id)
-            second_loans = self.loans_for_borrowers(second_borrowers)
-            second_funded_loans = self.funded_loans(second_loans)
-            borrower_funded_loans = self.funded_loans(self.loans_by_borrower.get(borrower_id, []))
+            second_loans = second_stat["loans"]
+            second_funded_loans = second_stat["funded_loans"]
+            borrower_funded_loans = borrower_funded_loans_by_id.get(borrower_id, [])
             community = (
                 community_by_borrower.get(borrower_id, {})
                 if community_method in {"louvain", "leiden"}
@@ -1334,37 +1511,37 @@ class RiskGraph:
             )
 
             feature_values = {
-                "地址簇大小_地址数": len(self.distinct_from_loans(addr_loans, ADDRESS_COL)),
-                "收货人手机号关联人数": len(self.distinct_from_loans(agent_loans, BORROWER_COL)),
-                "收货人手机号关联设备数": len(self.distinct_from_loans(agent_loans, DEVICE_COL)),
-                "收货人手机号关联ip数": len(self.distinct_from_loans(agent_loans, IP_COL)),
-                "收货人手机号关联地址簇数": len(self.distinct_from_loans(agent_loans, ADDR_CLUSTER_COL)),
-                "收货人手机号坏账率": self.bad_rate(agent_loans, basis),
-                "地址簇关联人数": len(self.distinct_from_loans(addr_loans, BORROWER_COL)),
-                "地址簇关联收货人手机号数": len(self.distinct_from_loans(addr_loans, AGENT_COL)),
-                "地址簇关联设备数": len(self.distinct_from_loans(addr_loans, DEVICE_COL)),
-                "地址簇关联ip数": len(self.distinct_from_loans(addr_loans, IP_COL)),
-                "地址簇申请笔数": len(addr_loans),
-                "地址簇坏账率": self.bad_rate(addr_loans, basis),
-                "设备关联人数": len(self.distinct_from_loans(device_loans, BORROWER_COL)),
-                "设备关联地址簇数": len(self.distinct_from_loans(device_loans, ADDR_CLUSTER_COL)),
-                "设备关联收货手机号数": len(self.distinct_from_loans(device_loans, AGENT_COL)),
-                "设备申请笔数": len(device_loans),
-                "设备坏账率": self.bad_rate(device_loans, basis),
-                "IP关联人数": len(self.distinct_from_loans(ip_loans, BORROWER_COL)),
-                "IP关联设备数": len(self.distinct_from_loans(ip_loans, DEVICE_COL)),
-                "IP申请笔数": len(ip_loans),
-                "IP坏账率": self.bad_rate(ip_loans, basis),
+                "地址簇大小_地址数": len(addr_stat.get("addresses", set())),
+                "收货人手机号关联人数": len(agent_stat.get("borrowers", set())),
+                "收货人手机号关联设备数": len(agent_stat.get("devices", set())),
+                "收货人手机号关联ip数": len(agent_stat.get("ips", set())),
+                "收货人手机号关联地址簇数": len(agent_stat.get("addr_clusters", set())),
+                "收货人手机号坏账率": agent_stat.get("bad_rate", 0),
+                "地址簇关联人数": len(addr_stat.get("borrowers", set())),
+                "地址簇关联收货人手机号数": len(addr_stat.get("agents", set())),
+                "地址簇关联设备数": len(addr_stat.get("devices", set())),
+                "地址簇关联ip数": len(addr_stat.get("ips", set())),
+                "地址簇申请笔数": addr_stat.get("application_count", 0),
+                "地址簇坏账率": addr_stat.get("bad_rate", 0),
+                "设备关联人数": len(device_stat.get("borrowers", set())),
+                "设备关联地址簇数": len(device_stat.get("addr_clusters", set())),
+                "设备关联收货手机号数": len(device_stat.get("agents", set())),
+                "设备申请笔数": device_stat.get("application_count", 0),
+                "设备坏账率": device_stat.get("bad_rate", 0),
+                "IP关联人数": len(ip_stat.get("borrowers", set())),
+                "IP关联设备数": len(ip_stat.get("devices", set())),
+                "IP申请笔数": ip_stat.get("application_count", 0),
+                "IP坏账率": ip_stat.get("bad_rate", 0),
                 "借款人一度中介数": len(self.first_degree_agents(borrower_id)),
                 "借款人贷款笔数": len(borrower_funded_loans),
-                "借款人坏账率": self.bad_rate(borrower_funded_loans, basis),
+                "借款人坏账率": borrower_bad_rate_by_id.get(borrower_id, 0),
                 "二度借款人数": len(second_borrowers),
                 "二度中介数": len(second_agents),
-                "二度设备数": len(self.distinct_from_loans(second_loans, DEVICE_COL)),
-                "二度ip数": len(self.distinct_from_loans(second_loans, IP_COL)),
-                "二度地址簇数": len(self.distinct_from_loans(second_loans, ADDR_CLUSTER_COL)),
-                "二度坏账率": self.bad_rate(second_funded_loans, basis),
-                "二度申请人数": len({loan_item[BORROWER_COL] for loan_item in second_loans if loan_item.get(BORROWER_COL)}),
+                "二度设备数": len(second_stat["devices"]),
+                "二度ip数": len(second_stat["ips"]),
+                "二度地址簇数": len(second_stat["addr_clusters"]),
+                "二度坏账率": second_stat["bad_rate"],
+                "二度申请人数": len(second_stat["application_borrowers"]),
                 "二度申请笔数": len(second_loans),
                 "二度贷款笔数": len(second_funded_loans),
                 "节点度数(共享用户)": network.get("节点度数(共享用户)", 0),
@@ -1391,16 +1568,16 @@ class RiskGraph:
                 "中介中心性(多关系)": network.get("中介中心性(多关系)", 0),
                 "连通子图大小(多关系)": network.get("连通子图大小(多关系)", 1),
                 "社区id(多关系)": network.get("社区id(多关系)", ""),
-                "社区id": selected_community_id,
-                "社区规模": selected_community_size,
-                "社区借款人数": community.get("borrower_count", 0),
-                "社区贷款笔数": community.get("loan_count", 0),
-                "社区坏账率": community.get("bad_debt_rate", 0),
-                "社区设备密度": community.get("device_density", 0),
-                "社区ip密度": community.get("ip_density", 0),
-                "社区地址密度": community.get("address_density", 0),
-                "社区共享借款人数": community.get("shared_borrower_count", 0),
-                "社区风险分": community.get("risk_score", 0),
+                f"社区id({selected_community_suffix})": selected_community_id,
+                f"社区规模({selected_community_suffix})": selected_community_size,
+                f"社区借款人数({selected_community_suffix})": community.get("borrower_count", 0),
+                f"社区贷款笔数({selected_community_suffix})": community.get("loan_count", 0),
+                f"社区坏账率({selected_community_suffix})": community.get("bad_debt_rate", 0),
+                f"社区设备密度({selected_community_suffix})": community.get("device_density", 0),
+                f"社区ip密度({selected_community_suffix})": community.get("ip_density", 0),
+                f"社区地址密度({selected_community_suffix})": community.get("address_density", 0),
+                f"社区共享借款人数({selected_community_suffix})": community.get("shared_borrower_count", 0),
+                f"社区风险分({selected_community_suffix})": community.get("risk_score", 0),
             }
             if community_method in {"louvain", "leiden"}:
                 feature_values.update(
@@ -1620,6 +1797,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.handle_graph(payload)
             elif self.path == "/api/search":
                 self.handle_search(payload)
+            elif self.path == "/api/complex-query":
+                self.handle_complex_query(payload)
             else:
                 json_response(self, 404, {"error": "接口不存在"})
         except Exception as exc:  # noqa: BLE001 - convert to JSON for the UI
@@ -1634,7 +1813,7 @@ class Handler(BaseHTTPRequestHandler):
         reloan_filter = payload.get("reloan_filter") or "all"
         graph = RiskGraph(rows, basis, reloan_filter)
         dataset_id = uuid.uuid4().hex
-        DATASETS[dataset_id] = graph
+        DATASETS[dataset_id] = {"graph": graph, "original_rows": original_rows}
         center_type, center_id = graph.default_center(basis)
         summary = graph.summary(basis, community_method)
         summary["uploaded_row_count"] = len(original_rows)
@@ -1646,7 +1825,7 @@ class Handler(BaseHTTPRequestHandler):
                 "dataset_id": dataset_id,
                 "summary": summary,
                 "filter_options": {
-                    "reloan": filter_values(original_rows, RELOAN_COL),
+                    **build_filter_options(original_rows),
                 },
                 "top_agents": graph.top_agents(),
                 "top_borrowers": graph.top_borrowers(basis),
@@ -1656,11 +1835,14 @@ class Handler(BaseHTTPRequestHandler):
             },
         )
 
-    def dataset(self, payload: dict[str, Any]) -> RiskGraph:
+    def dataset_entry(self, payload: dict[str, Any]) -> dict[str, Any]:
         dataset_id = payload.get("dataset_id") or ""
         if dataset_id not in DATASETS:
             raise ValueError("数据集不存在，请重新上传文件。")
         return DATASETS[dataset_id]
+
+    def dataset(self, payload: dict[str, Any]) -> RiskGraph:
+        return self.dataset_entry(payload)["graph"]
 
     def handle_graph(self, payload: dict[str, Any]) -> None:
         graph = self.dataset(payload)
@@ -1672,6 +1854,15 @@ class Handler(BaseHTTPRequestHandler):
     def handle_search(self, payload: dict[str, Any]) -> None:
         graph = self.dataset(payload)
         json_response(self, 200, graph.search(payload.get("query") or ""))
+
+    def handle_complex_query(self, payload: dict[str, Any]) -> None:
+        entry = self.dataset_entry(payload)
+        result = complex_query_rows(
+            entry["original_rows"],
+            payload.get("filters") or {},
+            payload.get("query_values") or {},
+        )
+        json_response(self, 200, result)
 
 
 def main() -> None:

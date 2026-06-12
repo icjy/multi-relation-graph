@@ -10,6 +10,7 @@ const state = {
   lastFileName: "",
   currentGraph: null,
   featureTable: { columns: [], rows: [] },
+  complexQuery: { columns: [], rows: [], summary: {}, input_counts: {}, matched_value_counts: {}, unmatched_values: {}, page: 1, pageSize: 20 },
 };
 const graphHiddenTypes = new Set();
 
@@ -34,6 +35,17 @@ const views = document.querySelectorAll(".view");
 const appShell = document.querySelector(".app-shell");
 const navToggle = document.querySelector("#navToggle");
 const navExpand = document.querySelector("#navExpand");
+const queryReloanFilter = document.querySelector("#queryReloanFilter");
+const queryReturnFilter = document.querySelector("#queryReturnFilter");
+const queryFinalResultFilter = document.querySelector("#queryFinalResultFilter");
+const queryBorrowerValues = document.querySelector("#queryBorrowerValues");
+const queryAgentValues = document.querySelector("#queryAgentValues");
+const queryDeviceValues = document.querySelector("#queryDeviceValues");
+const queryIpValues = document.querySelector("#queryIpValues");
+const queryAddrValues = document.querySelector("#queryAddrValues");
+const runComplexQueryButton = document.querySelector("#runComplexQuery");
+const clearComplexQueryButton = document.querySelector("#clearComplexQuery");
+const queryPageSize = document.querySelector("#queryPageSize");
 let progressHideTimer = 0;
 let progressPulseTimer = 0;
 let currentProgress = 0;
@@ -92,6 +104,13 @@ centerInput.addEventListener("keydown", (event) => {
 centerInput.addEventListener("input", debounce(searchCenters, 240));
 exportCsvButton?.addEventListener("click", () => exportFeatureTable("csv"));
 exportExcelButton?.addEventListener("click", () => exportFeatureTable("xls"));
+runComplexQueryButton?.addEventListener("click", runComplexQuery);
+clearComplexQueryButton?.addEventListener("click", clearComplexQuery);
+queryPageSize?.addEventListener("change", () => {
+  state.complexQuery.pageSize = Number(queryPageSize.value) || 20;
+  state.complexQuery.page = 1;
+  renderComplexQueryResult();
+});
 
 function setCenterType(type) {
   state.centerType = type;
@@ -211,7 +230,7 @@ async function searchCenters() {
 
 function renderAll(data) {
   state.featureTable = data.feature_table || { columns: [], rows: [] };
-  updateReLoanOptions(data.filter_options?.reloan || []);
+  updateFilterOptions(data.filter_options || {});
   renderSummary(data.summary);
   renderGraph(data.graph);
   renderMetrics(data.graph);
@@ -221,18 +240,31 @@ function renderAll(data) {
   renderFeatureTable(state.featureTable);
 }
 
+function updateFilterOptions(options) {
+  updateReLoanOptions(options.reloan || []);
+  updateSelectOptions(queryReturnFilter, options.return || [], "all", returnLabel);
+  updateSelectOptions(queryFinalResultFilter, options.final_result || [], "all", finalResultLabel);
+}
+
 function updateReLoanOptions(values) {
   if (!reloanFilter) return;
   const selected = state.reloanFilter || "all";
-  const options = [
-    ["all", "全部"],
-    ...values.map((value) => [String(value), reloanLabel(value)]),
-  ];
-  reloanFilter.innerHTML = options
-    .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
-    .join("");
+  updateSelectOptions(reloanFilter, values, selected, reloanLabel);
   state.reloanFilter = values.map(String).includes(selected) ? selected : "all";
   reloanFilter.value = state.reloanFilter;
+  updateSelectOptions(queryReloanFilter, values, "all", reloanLabel);
+}
+
+function updateSelectOptions(select, values, selected = "all", labeler = (value) => value) {
+  if (!select) return;
+  const options = [
+    ["all", "全部"],
+    ...values.map((value) => [String(value), labeler(value)]),
+  ];
+  select.innerHTML = options
+    .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
+    .join("");
+  select.value = values.map(String).includes(selected) ? selected : "all";
 }
 
 function reloanLabel(value) {
@@ -240,6 +272,19 @@ function reloanLabel(value) {
   if (text === "0") return "首贷 / 0";
   if (text === "1") return "复贷 / 1";
   return text || "空值";
+}
+
+function returnLabel(value) {
+  const text = String(value ?? "");
+  if (text === "0") return "未退货 / 0";
+  if (text === "1") return "已退货 / 1";
+  return text || "空值";
+}
+
+function finalResultLabel(value) {
+  const text = String(value ?? "");
+  if (text === "30") return "借款通过 / 30";
+  return text ? `未通过 / ${text}` : "空值";
 }
 
 function showProgress(percent, title, detail) {
@@ -363,6 +408,170 @@ function renderFeatureTable(featureTable) {
       </tbody>
     </table>
   `;
+}
+
+async function runComplexQuery() {
+  if (!state.datasetId) {
+    showToast("请先在图谱分析页上传数据文件");
+    return;
+  }
+  try {
+    const response = await postJson("/api/complex-query", {
+      dataset_id: state.datasetId,
+      filters: {
+        reloan_flag: queryReloanFilter?.value || "all",
+        return_flag: queryReturnFilter?.value || "all",
+        final_result: queryFinalResultFilter?.value || "all",
+      },
+      query_values: getComplexQueryValues(),
+    });
+    state.complexQuery = {
+      ...response,
+      page: 1,
+      pageSize: Number(queryPageSize?.value) || 20,
+    };
+    renderComplexQueryResult();
+    showToast(`查询完成，命中 ${formatNumber(response.summary?.row_count || 0)} 行`);
+  } catch (error) {
+    showToast(error.message || String(error));
+  }
+}
+
+function getComplexQueryValues() {
+  return {
+    app_user_id: queryBorrowerValues?.value || "",
+    consigneeMobileId: queryAgentValues?.value || "",
+    device_id: queryDeviceValues?.value || "",
+    ip: queryIpValues?.value || "",
+    addr_cluster_id: queryAddrValues?.value || "",
+  };
+}
+
+function clearComplexQuery() {
+  [queryBorrowerValues, queryAgentValues, queryDeviceValues, queryIpValues, queryAddrValues].forEach((input) => {
+    if (input) input.value = "";
+  });
+  if (queryReloanFilter) queryReloanFilter.value = "all";
+  if (queryReturnFilter) queryReturnFilter.value = "all";
+  if (queryFinalResultFilter) queryFinalResultFilter.value = "all";
+  state.complexQuery = { columns: [], rows: [], summary: {}, input_counts: {}, matched_value_counts: {}, unmatched_values: {}, page: 1, pageSize: Number(queryPageSize?.value) || 20 };
+  renderComplexQueryResult();
+}
+
+function renderComplexQueryResult() {
+  const result = state.complexQuery || {};
+  renderQuerySummary(result.summary || {});
+  renderQueryHitDetails(result);
+  renderQueryResultTable(result);
+}
+
+function renderQuerySummary(summary) {
+  const container = document.querySelector("#querySummary");
+  if (!container) return;
+  const items = [
+    ["命中行数", summary.row_count],
+    ["命中 loan_task_id 数", summary.loan_task_id_count],
+    ["用户数 app_user_id", summary.borrower_count],
+    ["收货人手机号数", summary.agent_count],
+    ["设备数 device_id", summary.device_count],
+    ["IP数 ip", summary.ip_count],
+    ["地址簇数 addr_cluster_id", summary.addr_cluster_count],
+    ["原始地址数 consigneeAddr", summary.raw_address_count],
+    ["预处理地址数 receiverAddr", summary.clean_address_count],
+  ];
+  container.innerHTML = items.map(([label, value]) => `
+    <div class="summary-card">
+      <span>${label}</span>
+      <strong>${formatNumber(value || 0)}</strong>
+    </div>
+  `).join("");
+}
+
+function renderQueryHitDetails(result) {
+  const container = document.querySelector("#queryHitDetails");
+  const subtitle = document.querySelector("#queryHitSubtitle");
+  if (!container) return;
+  const labels = {
+    app_user_id: "用户 app_user_id",
+    consigneeMobileId: "收货手机号 consigneeMobileId",
+    device_id: "设备 device_id",
+    ip: "IP",
+    addr_cluster_id: "地址簇 addr_cluster_id",
+  };
+  const fields = Object.keys(labels);
+  const inputCounts = result.input_counts || {};
+  const matchedCounts = result.matched_value_counts || {};
+  const unmatched = result.unmatched_values || {};
+  const hasInput = fields.some((field) => inputCounts[field]);
+  subtitle.textContent = hasInput
+    ? `命中 ${formatNumber(result.summary?.row_count || 0)} 行；以下按输入字段展示命中值和未命中值。`
+    : "未输入实体值时，仅按下拉条件返回命中行。";
+  if (!hasInput) {
+    container.innerHTML = "暂无输入值统计";
+    container.classList.add("empty");
+    return;
+  }
+  container.classList.remove("empty");
+  container.innerHTML = fields
+    .filter((field) => inputCounts[field])
+    .map((field) => {
+      const missing = unmatched[field] || [];
+      return `
+        <div class="query-hit-row">
+          <strong>${labels[field]}</strong>
+          <span>
+            输入 ${formatNumber(inputCounts[field])} 个，命中 ${formatNumber(matchedCounts[field] || 0)} 个，未命中 ${formatNumber(missing.length)} 个
+            ${missing.length ? `<div class="miss-list">${missing.map((item) => `<code>${escapeHtml(item)}</code>`).join("")}</div>` : ""}
+          </span>
+        </div>
+      `;
+    }).join("");
+}
+
+function renderQueryResultTable(result) {
+  const container = document.querySelector("#queryResultTable");
+  const pagination = document.querySelector("#queryPagination");
+  const subtitle = document.querySelector("#queryTableSubtitle");
+  if (!container || !pagination) return;
+  const columns = result.columns || [];
+  const rows = result.rows || [];
+  const pageSize = Number(result.pageSize || 20);
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(Math.max(1, Number(result.page || 1)), totalPages);
+  state.complexQuery.page = page;
+  subtitle.textContent = rows.length
+    ? `共 ${formatNumber(rows.length)} 行，${formatNumber(columns.length)} 列；当前第 ${formatNumber(page)} / ${formatNumber(totalPages)} 页。`
+    : "展示上传文件原始列对应的命中行。";
+  if (!columns.length || !rows.length) {
+    container.innerHTML = "暂无查询";
+    container.classList.add("empty");
+    pagination.innerHTML = "";
+    return;
+  }
+  container.classList.remove("empty");
+  const start = (page - 1) * pageSize;
+  const pageRows = rows.slice(start, start + pageSize);
+  container.innerHTML = `
+    <table>
+      <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+      <tbody>
+        ${pageRows.map((row) => `
+          <tr>${columns.map((column) => `<td>${formatCell(row[column])}</td>`).join("")}</tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  pagination.innerHTML = `
+    <button type="button" data-page="prev" ${page <= 1 ? "disabled" : ""}>上一页</button>
+    <span>第 ${formatNumber(page)} / ${formatNumber(totalPages)} 页</span>
+    <button type="button" data-page="next" ${page >= totalPages ? "disabled" : ""}>下一页</button>
+  `;
+  pagination.querySelectorAll("button").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.complexQuery.page += button.dataset.page === "prev" ? -1 : 1;
+      renderQueryResultTable(state.complexQuery);
+    });
+  });
 }
 
 function renderCommunityTable(rows) {

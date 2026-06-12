@@ -15,6 +15,7 @@
         </div>
         <button id="navToggle" class="nav-collapse" type="button" aria-label="隐藏导航">-</button>
         <button class="nav-button active" type="button" data-view="graphView">图谱分析</button>
+        <button class="nav-button" type="button" data-view="complexQuery">复杂查询</button>
         <button class="nav-button" type="button" data-view="featureGuide">特征说明</button>
       </aside>
       <button id="navExpand" class="nav-expand" type="button" aria-label="显示导航" hidden>+</button>
@@ -174,6 +175,7 @@
             <li>申请笔数类字段统计筛选后的全量申请行。</li>
             <li>贷款笔数和坏账率类字段只统计 final_result=30 的通过样本。</li>
             <li>坏账率 = 通过样本中逾期笔数 / 通过样本总笔数。</li>
+            <li>所有坏账率类字段的逾期判断都跟随页面“逾期口径”下拉框，例如选择 fpd1 就按 fpd1 判断逾期，选择 cpd7 就按 cpd7 判断逾期。</li>
             <li>关联人数、关联设备数、关联 IP 数、关联地址簇数均为去重计数。</li>
             <li>页面上的逾期口径、首复贷、是否退货筛选会影响所有加工结果。</li>
           </ul>
@@ -256,7 +258,7 @@
               <dt>节点度数(共享用户)</dt><dd>A 直接连接的其他中介数量。</dd>
               <dt>加权度数(共享用户)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联的去重 app_user_id 数。</dd>
               <dt>PageRank分数(共享用户)</dt><dd>A 在共享用户中介投影图上的 PageRank。</dd>
-              <dt>中介中心性(共享用户)</dt><dd>A 在共享用户中介投影图上的介数中心性，衡量它是否位于其他中介之间的最短路径上。</dd>
+              <dt>中介中心性(共享用户)</dt><dd>A 在共享用户中介投影图上的介数中心性：BC(A)=Σσ(s,t|A)/σ(s,t)，再除以 (n-1)*(n-2) 归一化；衡量 A 是否位于其他中介之间的最短路径上。</dd>
               <dt>连通子图大小(共享用户)</dt><dd>A 所在连通分量中的中介数量。</dd>
               <dt>社区id(共享用户)</dt><dd>A 所在共享用户连通分量 ID。</dd>
             </dl>
@@ -264,7 +266,7 @@
 
           <article class="guide-card">
             <h2>连通分量关系图</h2>
-            <p>两个中介通过共享用户、设备、IP、地址簇计算关系；首复贷选择不同，连边阈值不同。</p>
+            <p>两个中介通过共享用户、设备、IP、地址簇计算关系；设备/IP/地址簇比较两个中介各自名下直接申请记录的属性集合交集，不要求必须共享借款人。</p>
             <dl>
               <dt>仅首贷或复贷</dt><dd>共享Device >= 1，或共享User >= 1，或共享IP >= 2 且 IP人数 <= 20，或共享Addr >= 1。</dd>
               <dt>全部数据</dt><dd>共享Device >= 1，或共享User >= 2，或共享IP >= 2 且 IP人数 <= 50，或共享Addr >= 1。</dd>
@@ -280,17 +282,17 @@
             <h2>单类关系中介投影</h2>
             <dl>
               <dt>节点度数(共享设备)</dt><dd>A 在共享设备图上直接连接的其他中介数量。</dd>
-              <dt>加权度数(共享设备)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人使用过的去重 device_id 数。</dd>
+              <dt>加权度数(共享设备)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介各自名下直接申请记录的去重 device_id 集合交集数量。</dd>
               <dt>节点度数(共享IP)</dt><dd>A 在共享 IP 图上直接连接的其他中介数量。</dd>
-              <dt>加权度数(共享IP)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人使用过的去重 ip 数。</dd>
+              <dt>加权度数(共享IP)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介各自名下直接申请记录的去重 ip 集合交集数量。</dd>
               <dt>节点度数(共享地址簇)</dt><dd>A 在共享地址簇图上直接连接的其他中介数量。</dd>
-              <dt>加权度数(共享地址簇)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人出现过的去重 addr_cluster_id 数。</dd>
+              <dt>加权度数(共享地址簇)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介各自名下直接申请记录的去重 addr_cluster_id 集合交集数量。</dd>
             </dl>
           </article>
 
           <article class="guide-card">
             <h2>多关系中介投影</h2>
-            <p>多关系边权 = 1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</p>
+            <p>多关系边权 = 1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数；设备/IP/地址簇使用中介名下直接申请记录口径。</p>
             <dl>
               <dt>节点度数(多关系)</dt><dd>A 在多关系图上直接连接的其他中介数量。</dd>
               <dt>加权度数(多关系)</dt><dd>A 连到的每一条边权相加，边权 = 1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
@@ -304,7 +306,7 @@
           <article class="guide-card">
             <h2>边权与 PageRank</h2>
             <dl>
-              <dt>Agent 多关系边权</dt><dd>1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
+              <dt>Agent 多关系边权</dt><dd>1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数；共享设备/IP/地址簇来自两个中介各自名下直接申请记录的属性集合交集。</dd>
               <dt>User 同构图边权</dt><dd>1.0 * 共享中介数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
               <dt>PageRank 公式</dt><dd>PR(v) = (1-d)/N + d*Dangling/N + d*Σ PR(u)*w(u,v)/Σw(u,x)，d=0.85，迭代 40 轮。</dd>
               <dt>符号说明</dt><dd>N 为节点数，w 为边权，Dangling 为无出边节点 PageRank 之和。</dd>
@@ -313,23 +315,110 @@
 
           <article class="guide-card">
             <h2>社区特征</h2>
-            <p>连通分量时社区为过滤后关系图中的中介连通分量；Louvain / Leiden 时通用社区字段仍为用户同构图社区，宽表会额外生成未过滤 Agent-Agent 多关系图社区字段。</p>
+            <p>连通分量时社区字段带 (Agent) 后缀，表示过滤后中介关系图社区；Louvain / Leiden 时社区字段带 (User) 后缀，表示用户同构图社区，并额外生成未过滤 Agent-Agent 多关系图社区字段。</p>
             <dl>
-              <dt>社区id</dt><dd>当前行命中的社区 ID。</dd>
-              <dt>社区规模</dt><dd>连通分量口径下为社区中介数；Louvain / Leiden 下为用户社区借款人数。</dd>
-              <dt>社区借款人数</dt><dd>社区覆盖的去重 app_user_id 数。</dd>
-              <dt>社区贷款笔数</dt><dd>社区覆盖记录中 final_result=30 的笔数。</dd>
+              <dt>...(Agent)</dt><dd>中介社区字段。连通分量默认输出这组字段；选择 Louvain / Leiden 时，也会额外输出基于未过滤 Agent-Agent 多关系图的这组字段。</dd>
+              <dt>...(User)</dt><dd>用户社区字段。选择 Louvain / Leiden 时输出，来自用户同构图社区。</dd>
+              <dt>社区规模</dt><dd>(Agent) 为社区中介数；(User) 为用户社区借款人数。</dd>
               <dt>社区坏账率</dt><dd>社区覆盖记录中 final_result=30 且逾期的笔数 / final_result=30 的笔数。</dd>
-              <dt>社区设备密度</dt><dd>社区内部节点两两共享设备形成的边数 / 理论最大边数。</dd>
-              <dt>社区ip密度</dt><dd>社区内部节点两两共享 IP 形成的边数 / 理论最大边数。</dd>
-              <dt>社区地址密度</dt><dd>社区内部节点两两共享地址簇形成的边数 / 理论最大边数。</dd>
-              <dt>社区共享借款人数</dt><dd>连通分量口径下，社区内被至少两个中介共享的借款人数；Louvain / Leiden 用户社区口径下当前为 0。</dd>
+              <dt>社区设备/ip/地址密度</dt><dd>社区内部节点两两共享对应属性形成的边数 / 理论最大边数。</dd>
+              <dt>社区共享借款人数</dt><dd>(Agent) 为社区内被至少两个中介共享的借款人数；(User) 当前为 0。</dd>
               <dt>社区风险分</dt><dd>由坏账率、网络密度、设备/IP/地址密度等组合得到的解释性排序分，不是模型概率。</dd>
-              <dt>...(Agent)</dt><dd>选择 Louvain / Leiden 时，基于未过滤 Agent-Agent 多关系图同步生成的中介社区字段。</dd>
               <dt>Agent 风险分</dt><dd>min(100, round(坏账率*55 + 网络密度*20 + min(共享借款人占比,1)*15 + min(中介数/10,1)*10, 2))。</dd>
               <dt>User 风险分</dt><dd>min(100, round(坏账率*55 + 用户网络密度*15 + 设备密度*10 + IP密度*10 + 地址密度*10, 2))。</dd>
             </dl>
           </article>
+        </section>
+      </section>
+
+      <section id="complexQuery" class="workspace view query-view" hidden>
+        <header class="topbar">
+          <div>
+            <h1>复杂查询</h1>
+            <p>按多个用户、中介、设备、IP、地址簇批量命中上传明细，辅助校验实体覆盖和原始行。</p>
+          </div>
+        </header>
+
+        <section class="query-panel">
+          <div class="query-filters">
+            <label>
+              首复贷
+              <select id="queryReloanFilter">
+                <option value="all">全部</option>
+              </select>
+            </label>
+            <label>
+              是否退货
+              <select id="queryReturnFilter">
+                <option value="all">全部</option>
+              </select>
+            </label>
+            <label>
+              借款结果
+              <select id="queryFinalResultFilter">
+                <option value="all">全部</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="query-inputs">
+            <label>
+              用户 app_user_id
+              <textarea id="queryBorrowerValues" rows="3" placeholder="多个值用 | 分隔"></textarea>
+            </label>
+            <label>
+              收货手机号 consigneeMobileId
+              <textarea id="queryAgentValues" rows="3" placeholder="多个值用 | 分隔"></textarea>
+            </label>
+            <label>
+              设备 device_id
+              <textarea id="queryDeviceValues" rows="3" placeholder="多个值用 | 分隔"></textarea>
+            </label>
+            <label>
+              IP
+              <textarea id="queryIpValues" rows="3" placeholder="多个值用 | 分隔"></textarea>
+            </label>
+            <label>
+              地址簇 addr_cluster_id
+              <textarea id="queryAddrValues" rows="3" placeholder="多个值用 | 分隔"></textarea>
+            </label>
+          </div>
+
+          <div class="query-actions">
+            <button id="runComplexQuery" class="primary" type="button">查询</button>
+            <button id="clearComplexQuery" class="secondary" type="button">清空查询</button>
+          </div>
+        </section>
+
+        <section id="querySummary" class="summary-grid query-summary"></section>
+
+        <section class="query-section">
+          <div class="feature-head">
+            <div>
+              <h2>输入命中情况</h2>
+              <p id="queryHitSubtitle">输入多个值后查询，页面会展示命中值数量和未命中值。</p>
+            </div>
+          </div>
+          <div id="queryHitDetails" class="query-hit-details empty">暂无查询</div>
+        </section>
+
+        <section class="query-section">
+          <div class="feature-head">
+            <div>
+              <h2>命中明细表</h2>
+              <p id="queryTableSubtitle">展示上传文件原始列对应的命中行。</p>
+            </div>
+            <label class="page-size-label">
+              每页
+              <select id="queryPageSize">
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </label>
+          </div>
+          <div id="queryResultTable" class="feature-table empty">暂无查询</div>
+          <div id="queryPagination" class="pagination"></div>
         </section>
       </section>
     </main>

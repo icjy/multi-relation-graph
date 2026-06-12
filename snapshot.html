@@ -718,6 +718,118 @@
         color: var(--muted);
       }
 
+      .query-panel,
+      .query-section {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+
+      .query-filters {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(160px, 1fr));
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .query-inputs {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 86px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fff;
+        color: var(--text);
+        padding: 10px;
+        resize: vertical;
+        font: inherit;
+      }
+
+      .query-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        margin-top: 14px;
+      }
+
+      .query-summary {
+        margin-bottom: 16px;
+      }
+
+      .query-hit-details {
+        display: grid;
+        gap: 10px;
+        color: var(--text);
+      }
+
+      .query-hit-row {
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr);
+        gap: 12px;
+        border-top: 1px solid var(--line);
+        padding-top: 10px;
+      }
+
+      .query-hit-row:first-child {
+        border-top: 0;
+        padding-top: 0;
+      }
+
+      .query-hit-row span {
+        color: var(--muted);
+      }
+
+      .miss-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .miss-list code {
+        background: #f2f6f8;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--text);
+        padding: 3px 8px;
+      }
+
+      .page-size-label {
+        align-items: center;
+        grid-template-columns: auto 92px;
+        min-width: 132px;
+      }
+
+      .pagination {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 12px;
+        color: var(--muted);
+      }
+
+      .pagination button {
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 6px;
+        color: var(--text);
+        cursor: pointer;
+        padding: 7px 10px;
+      }
+
+      .pagination button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
       @media (max-width: 980px) {
         .app-shell {
           grid-template-columns: 1fr;
@@ -757,6 +869,8 @@
         }
 
         .controls,
+        .query-filters,
+        .query-inputs,
         .graph-layout,
         .tables,
         .analysis-progress,
@@ -784,6 +898,7 @@
         </div>
         <button id="navToggle" class="nav-collapse" type="button" aria-label="隐藏导航">-</button>
         <button class="nav-button active" type="button" data-view="graphView">图谱分析</button>
+        <button class="nav-button" type="button" data-view="complexQuery">复杂查询</button>
         <button class="nav-button" type="button" data-view="featureGuide">特征说明</button>
       </aside>
       <button id="navExpand" class="nav-expand" type="button" aria-label="显示导航" hidden>+</button>
@@ -947,6 +1062,7 @@
             <li>申请笔数类字段统计筛选后的全量申请行。</li>
             <li>贷款笔数和坏账率类字段只统计 final_result=30 的通过样本。</li>
             <li>坏账率 = 通过样本中逾期笔数 / 通过样本总笔数。</li>
+            <li>所有坏账率类字段的逾期判断都跟随页面“逾期口径”下拉框，例如选择 fpd1 就按 fpd1 判断逾期，选择 cpd7 就按 cpd7 判断逾期。</li>
             <li>关联人数、关联设备数、关联 IP 数、关联地址簇数均为去重计数。</li>
           </ul>
         </section>
@@ -982,14 +1098,14 @@
               <dt>节点度数(共享用户)</dt><dd>A 直接连接的其他中介数量。</dd>
               <dt>加权度数(共享用户)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联的去重 app_user_id 数。</dd>
               <dt>PageRank分数(共享用户)</dt><dd>A 在共享用户中介投影图上的 PageRank。</dd>
-              <dt>中介中心性(共享用户)</dt><dd>A 在共享用户中介投影图上的介数中心性，衡量它是否位于其他中介之间的最短路径上。</dd>
+              <dt>中介中心性(共享用户)</dt><dd>A 在共享用户中介投影图上的介数中心性：BC(A)=Σσ(s,t|A)/σ(s,t)，再除以 (n-1)*(n-2) 归一化；衡量 A 是否位于其他中介之间的最短路径上。</dd>
               <dt>连通子图大小/社区id(共享用户)</dt><dd>A 所在共享用户连通分量的中介数量和 ID。</dd>
             </dl>
           </article>
 
           <article class="guide-card">
             <h2>连通分量关系图</h2>
-            <p>两个中介通过共享用户、设备、IP、地址簇计算关系；首复贷选择不同，连边阈值不同。</p>
+            <p>两个中介通过共享用户、设备、IP、地址簇计算关系；设备/IP/地址簇比较两个中介各自名下直接申请记录的属性集合交集，不要求必须共享借款人。</p>
             <dl>
               <dt>仅首贷或复贷</dt><dd>共享Device >= 1，或共享User >= 1，或共享IP >= 2 且 IP人数 <= 20，或共享Addr >= 1。</dd>
               <dt>全部数据</dt><dd>共享Device >= 1，或共享User >= 2，或共享IP >= 2 且 IP人数 <= 50，或共享Addr >= 1。</dd>
@@ -1004,17 +1120,17 @@
             <h2>单类关系中介投影</h2>
             <dl>
               <dt>节点度数(共享设备)</dt><dd>A 在共享设备图上直接连接的其他中介数量。</dd>
-              <dt>加权度数(共享设备)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人使用过的去重 device_id 数。</dd>
+              <dt>加权度数(共享设备)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介各自名下直接申请记录的去重 device_id 集合交集数量。</dd>
               <dt>节点度数(共享IP)</dt><dd>A 在共享 IP 图上直接连接的其他中介数量。</dd>
-              <dt>加权度数(共享IP)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人使用过的去重 ip 数。</dd>
+              <dt>加权度数(共享IP)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介各自名下直接申请记录的去重 ip 集合交集数量。</dd>
               <dt>节点度数(共享地址簇)</dt><dd>A 在共享地址簇图上直接连接的其他中介数量。</dd>
-              <dt>加权度数(共享地址簇)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介共同关联借款人出现过的去重 addr_cluster_id 数。</dd>
+              <dt>加权度数(共享地址簇)</dt><dd>A 连到的每一条边权相加，边权 = A 与对应中介各自名下直接申请记录的去重 addr_cluster_id 集合交集数量。</dd>
             </dl>
           </article>
 
           <article class="guide-card">
             <h2>多关系中介投影</h2>
-            <p>多关系边权 = 1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</p>
+            <p>多关系边权 = 1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数；设备/IP/地址簇使用中介名下直接申请记录口径。</p>
             <dl>
               <dt>节点度数(多关系)</dt><dd>A 在多关系图上直接连接的其他中介数量。</dd>
               <dt>加权度数(多关系)</dt><dd>A 连到的每一条边权相加，边权 = 1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
@@ -1027,7 +1143,7 @@
           <article class="guide-card">
             <h2>边权与 PageRank</h2>
             <dl>
-              <dt>Agent 多关系边权</dt><dd>1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
+              <dt>Agent 多关系边权</dt><dd>1.0 * 共享用户数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数；共享设备/IP/地址簇来自两个中介各自名下直接申请记录的属性集合交集。</dd>
               <dt>User 同构图边权</dt><dd>1.0 * 共享中介数 + 1.2 * 共享设备数 + 0.8 * 共享 IP 数 + 1.0 * 共享地址簇数。</dd>
               <dt>PageRank 公式</dt><dd>PR(v) = (1-d)/N + d*Dangling/N + d*Σ PR(u)*w(u,v)/Σw(u,x)，d=0.85，迭代 40 轮。</dd>
               <dt>符号说明</dt><dd>N 为节点数，w 为边权，Dangling 为无出边节点 PageRank 之和。</dd>
@@ -1036,18 +1152,110 @@
 
           <article class="guide-card">
             <h2>社区特征</h2>
-            <p>连通分量时社区为过滤后关系图中的中介连通分量；Louvain / Leiden 时通用社区字段仍为用户同构图社区，宽表会额外生成未过滤 Agent-Agent 多关系图社区字段。</p>
+            <p>连通分量时社区字段带 (Agent) 后缀，表示过滤后中介关系图社区；Louvain / Leiden 时社区字段带 (User) 后缀，表示用户同构图社区，并额外生成未过滤 Agent-Agent 多关系图社区字段。</p>
             <dl>
-              <dt>社区id/社区规模</dt><dd>当前行命中的社区 ID；连通分量下规模为中介数，Louvain / Leiden 下规模为用户数。</dd>
+              <dt>...(Agent)</dt><dd>中介社区字段。连通分量默认输出这组字段；选择 Louvain / Leiden 时，也会额外输出基于未过滤 Agent-Agent 多关系图的这组字段。</dd>
+              <dt>...(User)</dt><dd>用户社区字段。选择 Louvain / Leiden 时输出，来自用户同构图社区。</dd>
+              <dt>社区规模</dt><dd>(Agent) 为社区中介数；(User) 为用户社区借款人数。</dd>
               <dt>社区借款人数/贷款笔数/坏账率</dt><dd>社区覆盖用户数、通过贷款笔数和通过样本坏账率。</dd>
               <dt>社区设备/ip/地址密度</dt><dd>社区内部节点两两共享对应属性形成的边数 / 理论最大边数。</dd>
-              <dt>社区共享借款人数</dt><dd>连通分量口径下，社区内被至少两个中介共享的借款人数；用户社区口径下当前为 0。</dd>
+              <dt>社区共享借款人数</dt><dd>(Agent) 为社区内被至少两个中介共享的借款人数；(User) 当前为 0。</dd>
               <dt>社区风险分</dt><dd>由坏账率、网络密度、设备/IP/地址密度等组合得到的解释性排序分。</dd>
-              <dt>...(Agent)</dt><dd>选择 Louvain / Leiden 时，基于未过滤 Agent-Agent 多关系图同步生成的中介社区字段。</dd>
               <dt>Agent 风险分</dt><dd>min(100, round(坏账率*55 + 网络密度*20 + min(共享借款人占比,1)*15 + min(中介数/10,1)*10, 2))。</dd>
               <dt>User 风险分</dt><dd>min(100, round(坏账率*55 + 用户网络密度*15 + 设备密度*10 + IP密度*10 + 地址密度*10, 2))。</dd>
             </dl>
           </article>
+        </section>
+      </section>
+
+      <section id="complexQuery" class="workspace view query-view" hidden>
+        <header class="topbar">
+          <div>
+            <h1>复杂查询</h1>
+            <p>按多个用户、中介、设备、IP、地址簇批量命中上传明细，辅助校验实体覆盖和原始行。</p>
+          </div>
+        </header>
+
+        <section class="query-panel">
+          <div class="query-filters">
+            <label>
+              首复贷
+              <select id="queryReloanFilter">
+                <option value="all">全部</option>
+              </select>
+            </label>
+            <label>
+              是否退货
+              <select id="queryReturnFilter">
+                <option value="all">全部</option>
+              </select>
+            </label>
+            <label>
+              借款结果
+              <select id="queryFinalResultFilter">
+                <option value="all">全部</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="query-inputs">
+            <label>
+              用户 app_user_id
+              <textarea id="queryBorrowerValues" rows="3" placeholder="多个值用 | 分隔"></textarea>
+            </label>
+            <label>
+              收货手机号 consigneeMobileId
+              <textarea id="queryAgentValues" rows="3" placeholder="多个值用 | 分隔"></textarea>
+            </label>
+            <label>
+              设备 device_id
+              <textarea id="queryDeviceValues" rows="3" placeholder="多个值用 | 分隔"></textarea>
+            </label>
+            <label>
+              IP
+              <textarea id="queryIpValues" rows="3" placeholder="多个值用 | 分隔"></textarea>
+            </label>
+            <label>
+              地址簇 addr_cluster_id
+              <textarea id="queryAddrValues" rows="3" placeholder="多个值用 | 分隔"></textarea>
+            </label>
+          </div>
+
+          <div class="query-actions">
+            <button id="runComplexQuery" class="primary" type="button">查询</button>
+            <button id="clearComplexQuery" class="secondary" type="button">清空查询</button>
+          </div>
+        </section>
+
+        <section id="querySummary" class="summary-grid query-summary"></section>
+
+        <section class="query-section">
+          <div class="feature-head">
+            <div>
+              <h2>输入命中情况</h2>
+              <p id="queryHitSubtitle">输入多个值后查询，页面会展示命中值数量和未命中值。</p>
+            </div>
+          </div>
+          <div id="queryHitDetails" class="query-hit-details empty">暂无查询</div>
+        </section>
+
+        <section class="query-section">
+          <div class="feature-head">
+            <div>
+              <h2>命中明细表</h2>
+              <p id="queryTableSubtitle">展示上传文件原始列对应的命中行。</p>
+            </div>
+            <label class="page-size-label">
+              每页
+              <select id="queryPageSize">
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </label>
+          </div>
+          <div id="queryResultTable" class="feature-table empty">暂无查询</div>
+          <div id="queryPagination" class="pagination"></div>
         </section>
       </section>
     </main>
@@ -1114,6 +1322,7 @@
         lastFileName: "",
         currentGraph: null,
         featureTable: { columns: [], rows: [] },
+        complexQuery: { columns: [], rows: [], summary: {}, input_counts: {}, matched_value_counts: {}, unmatched_values: {}, page: 1, pageSize: 20 },
       };
       const graphHiddenTypes = new Set();
 
@@ -1138,6 +1347,17 @@
       const appShell = document.querySelector(".app-shell");
       const navToggle = document.querySelector("#navToggle");
       const navExpand = document.querySelector("#navExpand");
+      const queryReloanFilter = document.querySelector("#queryReloanFilter");
+      const queryReturnFilter = document.querySelector("#queryReturnFilter");
+      const queryFinalResultFilter = document.querySelector("#queryFinalResultFilter");
+      const queryBorrowerValues = document.querySelector("#queryBorrowerValues");
+      const queryAgentValues = document.querySelector("#queryAgentValues");
+      const queryDeviceValues = document.querySelector("#queryDeviceValues");
+      const queryIpValues = document.querySelector("#queryIpValues");
+      const queryAddrValues = document.querySelector("#queryAddrValues");
+      const runComplexQueryButton = document.querySelector("#runComplexQuery");
+      const clearComplexQueryButton = document.querySelector("#clearComplexQuery");
+      const queryPageSize = document.querySelector("#queryPageSize");
       let progressHideTimer = 0;
 
       navButtons.forEach((button) => {
@@ -1192,6 +1412,13 @@
       centerInput.addEventListener("input", debounce(searchCenters, 240));
       exportCsvButton?.addEventListener("click", () => exportFeatureTable("csv"));
       exportExcelButton?.addEventListener("click", () => exportFeatureTable("xls"));
+      runComplexQueryButton?.addEventListener("click", runComplexQuery);
+      clearComplexQueryButton?.addEventListener("click", clearComplexQuery);
+      queryPageSize?.addEventListener("change", () => {
+        state.complexQuery.pageSize = Number(queryPageSize.value) || 20;
+        state.complexQuery.page = 1;
+        renderComplexQueryResult();
+      });
 
       async function analyzeFile(file) {
         showProgress(6, "读取文件", "正在解析本地 CSV / Excel");
@@ -1204,7 +1431,7 @@
           }
           state.lastFileName = file.name;
           state.lastRows = rows;
-          updateReLoanOptions(extractFilterValues(rows, RELOAN_COL));
+          updateFilterOptions(rows);
           await analyzeRows(rows);
           showToast("分析完成");
         } catch (error) {
@@ -1319,12 +1546,14 @@
           this.overdueBasis = overdueBasis;
           this.reloanFilter = normalizeValue(reloanFilter || "all");
           this.agentToBorrowers = new Map();
+          this.agentDirectAttributes = new Map();
           this.borrowerToAgents = new Map();
           this.loansByBorrower = new Map();
           this.loanRows = [];
           this.skippedRows = 0;
           this.sourceColumns = rows[0] ? Object.keys(rows[0]) : [];
           this.columns = [...new Set(rows.flatMap((row) => Object.keys(row)))].sort();
+          this.agentRelationCountsCache = new Map();
           this.build();
         }
 
@@ -1352,11 +1581,34 @@
             addToSetMap(this.borrowerToAgents, borrowerId, agentId);
             addToListMap(this.loansByBorrower, borrowerId, cleanRow);
             this.loanRows.push(cleanRow);
+            for (const column of [DEVICE_COL, IP_COL, ADDR_CLUSTER_COL]) {
+              const value = normalizeValue(cleanRow[column]);
+              if (!value) continue;
+              if (!this.agentDirectAttributes.has(agentId)) this.agentDirectAttributes.set(agentId, new Map());
+              addToSetMap(this.agentDirectAttributes.get(agentId), column, value);
+            }
           }
         }
 
         distinctFromLoans(loans, column) {
           return new Set(loans.map((loan) => normalizeValue(loan[column])).filter(Boolean));
+        }
+
+        loanGroupStats(loans, basis = this.overdueBasis) {
+          const funded = this.fundedLoans(loans);
+          const overdue = funded.filter((loan) => this.isOverdue(loan, basis)).length;
+          return {
+            borrowers: this.distinctFromLoans(loans, BORROWER_COL),
+            agents: this.distinctFromLoans(loans, AGENT_COL),
+            devices: this.distinctFromLoans(loans, DEVICE_COL),
+            ips: this.distinctFromLoans(loans, IP_COL),
+            addrClusters: this.distinctFromLoans(loans, ADDR_CLUSTER_COL),
+            addresses: this.distinctFromLoans(loans, ADDRESS_COL),
+            applicationCount: loans.length,
+            loanCount: funded.length,
+            overdueLoanCount: overdue,
+            badRate: funded.length ? overdue / funded.length : 0,
+          };
         }
 
         badRate(loans, basis = this.overdueBasis) {
@@ -1494,17 +1746,18 @@
             }
             return result;
           }
-          for (const [agentId, borrowers] of this.agentToBorrowers.entries()) {
-            const values = new Set();
-            for (const borrowerId of borrowers) {
-              for (const loan of this.loansByBorrower.get(borrowerId) || []) {
-                const value = normalizeValue(loan[column]);
-                if (value) values.add(value);
-              }
-            }
-            result.set(agentId, values);
+          for (const agentId of this.agentToBorrowers.keys()) {
+            result.set(agentId, new Set(this.agentDirectAttributes.get(agentId)?.get(column) || []));
           }
           return result;
+        }
+
+        agentDirectValues(agentId, column) {
+          return new Set(this.agentDirectAttributes.get(agentId)?.get(column) || []);
+        }
+
+        sharedAgentValues(left, right, column) {
+          return intersection(this.agentDirectValues(left, column), this.agentDirectValues(right, column));
         }
 
         connectedComponentRule() {
@@ -1513,11 +1766,14 @@
         }
 
         agentRelationCounts(ipBorrowerLimit = this.connectedComponentRule().ipBorrowerLimit) {
+          if (this.agentRelationCountsCache.has(ipBorrowerLimit)) {
+            return this.agentRelationCountsCache.get(ipBorrowerLimit);
+          }
           const agents = [...this.agentToBorrowers.keys()].sort();
           const borrowerSets = this.agentAttributeSets(BORROWER_COL);
           const deviceSets = this.agentAttributeSets(DEVICE_COL);
           const ipSets = this.agentAttributeSets(IP_COL);
-          const addrSets = this.agentAttributeSets(ADDR_CLUSTER_COL);
+          const addressSets = this.agentAttributeSets(ADDR_CLUSTER_COL);
           const ipToBorrowers = new Map();
           for (const loan of this.loanRows) {
             const ip = normalizeValue(loan[IP_COL]);
@@ -1535,19 +1791,23 @@
             for (let rightIndex = leftIndex + 1; rightIndex < agents.length; rightIndex += 1) {
               const left = agents[leftIndex];
               const right = agents[rightIndex];
+              const sharedBorrowers = intersection(borrowerSets.get(left) || new Set(), borrowerSets.get(right) || new Set());
+              const sharedDevice = intersection(deviceSets.get(left) || new Set(), deviceSets.get(right) || new Set());
               const sharedIpAll = intersection(ipSets.get(left) || new Set(), ipSets.get(right) || new Set());
+              const sharedAddress = intersection(addressSets.get(left) || new Set(), addressSets.get(right) || new Set());
               const count = {
-                user: intersectionSize(borrowerSets.get(left) || new Set(), borrowerSets.get(right) || new Set()),
-                device: intersectionSize(deviceSets.get(left) || new Set(), deviceSets.get(right) || new Set()),
+                user: sharedBorrowers.size,
+                device: sharedDevice.size,
                 ip: [...sharedIpAll].filter((ip) => eligibleIps.has(ip)).length,
                 ip_all: sharedIpAll.size,
-                address: intersectionSize(addrSets.get(left) || new Set(), addrSets.get(right) || new Set()),
+                address: sharedAddress.size,
               };
               if (count.user || count.device || count.ip_all || count.address) {
                 counts.set(`${left}|${right}`, count);
               }
             }
           }
+          this.agentRelationCountsCache.set(ipBorrowerLimit, counts);
           return counts;
         }
 
@@ -1566,13 +1826,13 @@
 
         agentProjectionByColumn(column) {
           const adjacency = new Map();
-          const attributeSets = this.agentAttributeSets(column);
           const agents = [...this.agentToBorrowers.keys()].sort();
+          const attributeSets = this.agentAttributeSets(column);
           for (let leftIndex = 0; leftIndex < agents.length; leftIndex += 1) {
             for (let rightIndex = leftIndex + 1; rightIndex < agents.length; rightIndex += 1) {
               const left = agents[leftIndex];
               const right = agents[rightIndex];
-              const weight = intersectionSize(attributeSets.get(left) || new Set(), attributeSets.get(right) || new Set());
+              const weight = intersection(attributeSets.get(left) || new Set(), attributeSets.get(right) || new Set()).size;
               if (!weight) continue;
               addToWeightedMap(adjacency, left, right, weight);
               addToWeightedMap(adjacency, right, left, weight);
@@ -1600,23 +1860,40 @@
           const nodes = [...this.agentToBorrowers.keys()].sort();
           if (!nodes.length) return {};
           const n = nodes.length;
-          let scores = Object.fromEntries(nodes.map((node) => [node, 1 / n]));
+          const nodeIndex = new Map(nodes.map((node, index) => [node, index]));
+          let scores = new Array(n).fill(1 / n);
+          const transitions = [];
+          const danglingIndices = [];
+          for (const node of nodes) {
+            const neighbors = adjacency.get(node) || new Map();
+            const weightSum = [...neighbors.values()].reduce((total, value) => total + value, 0);
+            if (!weightSum) {
+              transitions.push([]);
+              danglingIndices.push(nodeIndex.get(node));
+              continue;
+            }
+            transitions.push(
+              [...neighbors.entries()]
+                .filter(([neighbor]) => nodeIndex.has(neighbor))
+                .map(([neighbor, weight]) => [nodeIndex.get(neighbor), weight / weightSum])
+            );
+          }
+          const baseScore = (1 - damping) / n;
           for (let i = 0; i < iterations; i += 1) {
-            const nextScores = Object.fromEntries(nodes.map((node) => [node, (1 - damping) / n]));
-            const dangling = nodes.filter((node) => !(adjacency.get(node)?.size)).reduce((total, node) => total + scores[node], 0);
+            const dangling = danglingIndices.reduce((total, index) => total + scores[index], 0);
             const danglingShare = damping * dangling / n;
-            for (const node of nodes) {
-              nextScores[node] += danglingShare;
-              const neighbors = adjacency.get(node) || new Map();
-              const weightSum = [...neighbors.values()].reduce((total, value) => total + value, 0);
-              if (!weightSum) continue;
-              for (const [neighbor, weight] of neighbors) {
-                nextScores[neighbor] = (nextScores[neighbor] || (1 - damping) / n) + damping * scores[node] * weight / weightSum;
+            const nextScores = new Array(n).fill(baseScore + danglingShare);
+            for (let index = 0; index < transitions.length; index += 1) {
+              const neighbors = transitions[index];
+              if (!neighbors.length) continue;
+              const contribution = damping * scores[index];
+              for (const [neighborIndex, probability] of neighbors) {
+                nextScores[neighborIndex] += contribution * probability;
               }
             }
             scores = nextScores;
           }
-          return scores;
+          return Object.fromEntries(nodes.map((node, index) => [node, scores[index]]));
         }
 
         userProjection() {
@@ -2200,8 +2477,51 @@
             if (normalizeValue(loan[DEVICE_COL])) addToListMap(loansByDevice, normalizeValue(loan[DEVICE_COL]), loan);
             if (normalizeValue(loan[IP_COL])) addToListMap(loansByIp, normalizeValue(loan[IP_COL]), loan);
           }
+          const mapValues = (source, mapper) => new Map([...source.entries()].map(([key, value]) => [key, mapper(value)]));
+          const agentStats = mapValues(loansByAgent, (loans) => this.loanGroupStats(loans, basis));
+          const addrStats = mapValues(loansByAddrCluster, (loans) => this.loanGroupStats(loans, basis));
+          const deviceStats = mapValues(loansByDevice, (loans) => this.loanGroupStats(loans, basis));
+          const ipStats = mapValues(loansByIp, (loans) => this.loanGroupStats(loans, basis));
+          const borrowerFundedLoansById = new Map(
+            [...this.loansByBorrower.entries()].map(([borrowerId, loans]) => [borrowerId, this.fundedLoans(loans)])
+          );
+          const borrowerBadRates = new Map(
+            [...borrowerFundedLoansById.entries()].map(([borrowerId, loans]) => [borrowerId, this.badRate(loans, basis)])
+          );
+          const secondDegreeCache = new Map();
+          const secondDegreeStats = (borrowerId) => {
+            if (secondDegreeCache.has(borrowerId)) return secondDegreeCache.get(borrowerId);
+            const borrowers = this.secondDegreeBorrowers(borrowerId);
+            const loans = this.loansForBorrowers(borrowers);
+            const funded = this.fundedLoans(loans);
+            const stats = {
+              borrowers,
+              loans,
+              fundedLoans: funded,
+              devices: this.distinctFromLoans(loans, DEVICE_COL),
+              ips: this.distinctFromLoans(loans, IP_COL),
+              addrClusters: this.distinctFromLoans(loans, ADDR_CLUSTER_COL),
+              applicationBorrowers: new Set(loans.map((item) => item[BORROWER_COL]).filter(Boolean)),
+              badRate: this.badRate(funded, basis),
+            };
+            secondDegreeCache.set(borrowerId, stats);
+            return stats;
+          };
 
           const { agentFeatures, communityByAgent, communityByBorrower } = this.communityFeatureIndex(basis, method);
+          const selectedCommunitySuffix = ["louvain", "leiden"].includes(method) ? "User" : "Agent";
+          const selectedCommunityColumns = [
+            `社区id(${selectedCommunitySuffix})`,
+            `社区规模(${selectedCommunitySuffix})`,
+            `社区借款人数(${selectedCommunitySuffix})`,
+            `社区贷款笔数(${selectedCommunitySuffix})`,
+            `社区坏账率(${selectedCommunitySuffix})`,
+            `社区设备密度(${selectedCommunitySuffix})`,
+            `社区ip密度(${selectedCommunitySuffix})`,
+            `社区地址密度(${selectedCommunitySuffix})`,
+            `社区共享借款人数(${selectedCommunitySuffix})`,
+            `社区风险分(${selectedCommunitySuffix})`,
+          ];
           const featureColumns = [
             "地址簇大小_地址数", "收货人手机号关联人数", "收货人手机号关联设备数", "收货人手机号关联ip数", "收货人手机号关联地址簇数", "收货人手机号坏账率",
             "地址簇关联人数", "地址簇关联收货人手机号数", "地址簇关联设备数", "地址簇关联ip数", "地址簇申请笔数", "地址簇坏账率",
@@ -2213,7 +2533,7 @@
             "节点度数(连通分量关系)", "加权度数(连通分量关系)", "PageRank分数(连通分量关系)", "中介中心性(连通分量关系)", "连通子图大小(连通分量关系)", "社区id(连通分量关系)",
             "节点度数(共享设备)", "加权度数(共享设备)", "节点度数(共享IP)", "加权度数(共享IP)", "节点度数(共享地址簇)", "加权度数(共享地址簇)",
             "节点度数(多关系)", "加权度数(多关系)", "PageRank分数(多关系)", "中介中心性(多关系)", "连通子图大小(多关系)", "社区id(多关系)",
-            "社区id", "社区规模", "社区借款人数", "社区贷款笔数", "社区坏账率", "社区设备密度", "社区ip密度", "社区地址密度", "社区共享借款人数", "社区风险分",
+            ...selectedCommunityColumns,
           ];
           if (["louvain", "leiden"].includes(method)) {
             featureColumns.push(
@@ -2230,52 +2550,53 @@
             const addrClusterId = normalizeValue(loan[ADDR_CLUSTER_COL]);
             const deviceId = normalizeValue(loan[DEVICE_COL]);
             const ip = normalizeValue(loan[IP_COL]);
-            const agentLoans = loansByAgent.get(agentId) || [];
-            const addrLoans = loansByAddrCluster.get(addrClusterId) || [];
-            const deviceLoans = loansByDevice.get(deviceId) || [];
-            const ipLoans = loansByIp.get(ip) || [];
-            const secondBorrowers = this.secondDegreeBorrowers(borrowerId);
+            const agentStat = agentStats.get(agentId) || {};
+            const addrStat = addrStats.get(addrClusterId) || {};
+            const deviceStat = deviceStats.get(deviceId) || {};
+            const ipStat = ipStats.get(ip) || {};
+            const secondStat = secondDegreeStats(borrowerId);
+            const secondBorrowers = secondStat.borrowers;
             const secondAgents = this.secondDegreeAgents(agentId);
-            const secondLoans = this.loansForBorrowers(secondBorrowers);
-            const secondFundedLoans = this.fundedLoans(secondLoans);
-            const borrowerFundedLoans = this.fundedLoans(this.loansByBorrower.get(borrowerId) || []);
+            const secondLoans = secondStat.loans;
+            const secondFundedLoans = secondStat.fundedLoans;
+            const borrowerFundedLoans = borrowerFundedLoansById.get(borrowerId) || [];
             const network = agentFeatures[agentId] || {};
             const community = ["louvain", "leiden"].includes(method) ? (communityByBorrower[borrowerId] || {}) : (communityByAgent[agentId] || {});
             const selectedCommunityId = ["louvain", "leiden"].includes(method) ? (community.community_id || "") : (network["社区id(连通分量关系)"] || "");
             const selectedCommunitySize = ["louvain", "leiden"].includes(method) ? (community.borrower_count || 0) : (community.agent_count || 1);
             const row = {
               ...loan,
-              地址簇大小_地址数: this.distinctFromLoans(addrLoans, ADDRESS_COL).size,
-              收货人手机号关联人数: this.distinctFromLoans(agentLoans, BORROWER_COL).size,
-              收货人手机号关联设备数: this.distinctFromLoans(agentLoans, DEVICE_COL).size,
-              收货人手机号关联ip数: this.distinctFromLoans(agentLoans, IP_COL).size,
-              收货人手机号关联地址簇数: this.distinctFromLoans(agentLoans, ADDR_CLUSTER_COL).size,
-              收货人手机号坏账率: this.badRate(agentLoans, basis),
-              地址簇关联人数: this.distinctFromLoans(addrLoans, BORROWER_COL).size,
-              地址簇关联收货人手机号数: this.distinctFromLoans(addrLoans, AGENT_COL).size,
-              地址簇关联设备数: this.distinctFromLoans(addrLoans, DEVICE_COL).size,
-              地址簇关联ip数: this.distinctFromLoans(addrLoans, IP_COL).size,
-              地址簇申请笔数: addrLoans.length,
-              地址簇坏账率: this.badRate(addrLoans, basis),
-              设备关联人数: this.distinctFromLoans(deviceLoans, BORROWER_COL).size,
-              设备关联地址簇数: this.distinctFromLoans(deviceLoans, ADDR_CLUSTER_COL).size,
-              设备关联收货手机号数: this.distinctFromLoans(deviceLoans, AGENT_COL).size,
-              设备申请笔数: deviceLoans.length,
-              设备坏账率: this.badRate(deviceLoans, basis),
-              IP关联人数: this.distinctFromLoans(ipLoans, BORROWER_COL).size,
-              IP关联设备数: this.distinctFromLoans(ipLoans, DEVICE_COL).size,
-              IP申请笔数: ipLoans.length,
-              IP坏账率: this.badRate(ipLoans, basis),
+              地址簇大小_地址数: (addrStat.addresses || new Set()).size,
+              收货人手机号关联人数: (agentStat.borrowers || new Set()).size,
+              收货人手机号关联设备数: (agentStat.devices || new Set()).size,
+              收货人手机号关联ip数: (agentStat.ips || new Set()).size,
+              收货人手机号关联地址簇数: (agentStat.addrClusters || new Set()).size,
+              收货人手机号坏账率: agentStat.badRate || 0,
+              地址簇关联人数: (addrStat.borrowers || new Set()).size,
+              地址簇关联收货人手机号数: (addrStat.agents || new Set()).size,
+              地址簇关联设备数: (addrStat.devices || new Set()).size,
+              地址簇关联ip数: (addrStat.ips || new Set()).size,
+              地址簇申请笔数: addrStat.applicationCount || 0,
+              地址簇坏账率: addrStat.badRate || 0,
+              设备关联人数: (deviceStat.borrowers || new Set()).size,
+              设备关联地址簇数: (deviceStat.addrClusters || new Set()).size,
+              设备关联收货手机号数: (deviceStat.agents || new Set()).size,
+              设备申请笔数: deviceStat.applicationCount || 0,
+              设备坏账率: deviceStat.badRate || 0,
+              IP关联人数: (ipStat.borrowers || new Set()).size,
+              IP关联设备数: (ipStat.devices || new Set()).size,
+              IP申请笔数: ipStat.applicationCount || 0,
+              IP坏账率: ipStat.badRate || 0,
               借款人一度中介数: this.firstDegreeAgents(borrowerId).size,
               借款人贷款笔数: borrowerFundedLoans.length,
-              借款人坏账率: this.badRate(borrowerFundedLoans, basis),
+              借款人坏账率: borrowerBadRates.get(borrowerId) || 0,
               二度借款人数: secondBorrowers.size,
               二度中介数: secondAgents.size,
-              二度设备数: this.distinctFromLoans(secondLoans, DEVICE_COL).size,
-              二度ip数: this.distinctFromLoans(secondLoans, IP_COL).size,
-              二度地址簇数: this.distinctFromLoans(secondLoans, ADDR_CLUSTER_COL).size,
-              二度坏账率: this.badRate(secondFundedLoans, basis),
-              二度申请人数: new Set(secondLoans.map((item) => item[BORROWER_COL]).filter(Boolean)).size,
+              二度设备数: secondStat.devices.size,
+              二度ip数: secondStat.ips.size,
+              二度地址簇数: secondStat.addrClusters.size,
+              二度坏账率: secondStat.badRate,
+              二度申请人数: secondStat.applicationBorrowers.size,
               二度申请笔数: secondLoans.length,
               二度贷款笔数: secondFundedLoans.length,
               "节点度数(共享用户)": network["节点度数(共享用户)"] || 0,
@@ -2302,16 +2623,16 @@
               "中介中心性(多关系)": network["中介中心性(多关系)"] || 0,
               "连通子图大小(多关系)": network["连通子图大小(多关系)"] || 1,
               "社区id(多关系)": network["社区id(多关系)"] || "",
-              社区id: selectedCommunityId,
-              社区规模: selectedCommunitySize,
-              社区借款人数: community.borrower_count || 0,
-              社区贷款笔数: community.loan_count || 0,
-              社区坏账率: community.bad_debt_rate || 0,
-              社区设备密度: community.device_density || 0,
-              社区ip密度: community.ip_density || 0,
-              社区地址密度: community.address_density || 0,
-              社区共享借款人数: community.shared_borrower_count || 0,
-              社区风险分: community.risk_score || 0,
+              [`社区id(${selectedCommunitySuffix})`]: selectedCommunityId,
+              [`社区规模(${selectedCommunitySuffix})`]: selectedCommunitySize,
+              [`社区借款人数(${selectedCommunitySuffix})`]: community.borrower_count || 0,
+              [`社区贷款笔数(${selectedCommunitySuffix})`]: community.loan_count || 0,
+              [`社区坏账率(${selectedCommunitySuffix})`]: community.bad_debt_rate || 0,
+              [`社区设备密度(${selectedCommunitySuffix})`]: community.device_density || 0,
+              [`社区ip密度(${selectedCommunitySuffix})`]: community.ip_density || 0,
+              [`社区地址密度(${selectedCommunitySuffix})`]: community.address_density || 0,
+              [`社区共享借款人数(${selectedCommunitySuffix})`]: community.shared_borrower_count || 0,
+              [`社区风险分(${selectedCommunitySuffix})`]: community.risk_score || 0,
             };
             if (["louvain", "leiden"].includes(method)) {
               Object.assign(row, {
@@ -2769,6 +3090,162 @@
             </tbody>
           </table>
         `;
+      }
+
+      function runComplexQuery() {
+        if (!state.lastRows?.length) {
+          showToast("请先在图谱分析页上传数据文件");
+          return;
+        }
+        const result = complexQueryRows(state.lastRows, {
+          reloan_flag: queryReloanFilter?.value || "all",
+          return_flag: queryReturnFilter?.value || "all",
+          final_result: queryFinalResultFilter?.value || "all",
+        }, getComplexQueryValues());
+        state.complexQuery = {
+          ...result,
+          page: 1,
+          pageSize: Number(queryPageSize?.value) || 20,
+        };
+        renderComplexQueryResult();
+        showToast(`查询完成，命中 ${formatNumber(result.summary?.row_count || 0)} 行`);
+      }
+
+      function getComplexQueryValues() {
+        return {
+          app_user_id: queryBorrowerValues?.value || "",
+          consigneeMobileId: queryAgentValues?.value || "",
+          device_id: queryDeviceValues?.value || "",
+          ip: queryIpValues?.value || "",
+          addr_cluster_id: queryAddrValues?.value || "",
+        };
+      }
+
+      function clearComplexQuery() {
+        [queryBorrowerValues, queryAgentValues, queryDeviceValues, queryIpValues, queryAddrValues].forEach((input) => {
+          if (input) input.value = "";
+        });
+        if (queryReloanFilter) queryReloanFilter.value = "all";
+        if (queryReturnFilter) queryReturnFilter.value = "all";
+        if (queryFinalResultFilter) queryFinalResultFilter.value = "all";
+        state.complexQuery = { columns: [], rows: [], summary: {}, input_counts: {}, matched_value_counts: {}, unmatched_values: {}, page: 1, pageSize: Number(queryPageSize?.value) || 20 };
+        renderComplexQueryResult();
+      }
+
+      function renderComplexQueryResult() {
+        const result = state.complexQuery || {};
+        renderQuerySummary(result.summary || {});
+        renderQueryHitDetails(result);
+        renderQueryResultTable(result);
+      }
+
+      function renderQuerySummary(summary) {
+        const container = document.querySelector("#querySummary");
+        if (!container) return;
+        const items = [
+          ["命中行数", summary.row_count],
+          ["命中 loan_task_id 数", summary.loan_task_id_count],
+          ["用户数 app_user_id", summary.borrower_count],
+          ["收货人手机号数", summary.agent_count],
+          ["设备数 device_id", summary.device_count],
+          ["IP数 ip", summary.ip_count],
+          ["地址簇数 addr_cluster_id", summary.addr_cluster_count],
+          ["原始地址数 consigneeAddr", summary.raw_address_count],
+          ["预处理地址数 receiverAddr", summary.clean_address_count],
+        ];
+        container.innerHTML = items.map(([label, value]) => `
+          <div class="summary-card">
+            <span>${escapeHtml(label)}</span>
+            <strong>${formatNumber(value || 0)}</strong>
+          </div>
+        `).join("");
+      }
+
+      function renderQueryHitDetails(result) {
+        const container = document.querySelector("#queryHitDetails");
+        const subtitle = document.querySelector("#queryHitSubtitle");
+        if (!container) return;
+        const labels = {
+          app_user_id: "用户 app_user_id",
+          consigneeMobileId: "收货手机号 consigneeMobileId",
+          device_id: "设备 device_id",
+          ip: "IP",
+          addr_cluster_id: "地址簇 addr_cluster_id",
+        };
+        const fields = Object.keys(labels);
+        const inputCounts = result.input_counts || {};
+        const matchedCounts = result.matched_value_counts || {};
+        const unmatched = result.unmatched_values || {};
+        const hasInput = fields.some((field) => inputCounts[field]);
+        subtitle.textContent = hasInput
+          ? `命中 ${formatNumber(result.summary?.row_count || 0)} 行；以下按输入字段展示命中值和未命中值。`
+          : "未输入实体值时，仅按下拉条件返回命中行。";
+        if (!hasInput) {
+          container.innerHTML = "暂无输入值统计";
+          container.classList.add("empty");
+          return;
+        }
+        container.classList.remove("empty");
+        container.innerHTML = fields
+          .filter((field) => inputCounts[field])
+          .map((field) => {
+            const missing = unmatched[field] || [];
+            return `
+              <div class="query-hit-row">
+                <strong>${labels[field]}</strong>
+                <span>
+                  输入 ${formatNumber(inputCounts[field])} 个，命中 ${formatNumber(matchedCounts[field] || 0)} 个，未命中 ${formatNumber(missing.length)} 个
+                  ${missing.length ? `<div class="miss-list">${missing.map((item) => `<code>${escapeHtml(item)}</code>`).join("")}</div>` : ""}
+                </span>
+              </div>
+            `;
+          }).join("");
+      }
+
+      function renderQueryResultTable(result) {
+        const container = document.querySelector("#queryResultTable");
+        const pagination = document.querySelector("#queryPagination");
+        const subtitle = document.querySelector("#queryTableSubtitle");
+        if (!container || !pagination) return;
+        const columns = result.columns || [];
+        const rows = result.rows || [];
+        const pageSize = Number(result.pageSize || 20);
+        const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+        const page = Math.min(Math.max(1, Number(result.page || 1)), totalPages);
+        state.complexQuery.page = page;
+        subtitle.textContent = rows.length
+          ? `共 ${formatNumber(rows.length)} 行，${formatNumber(columns.length)} 列；当前第 ${formatNumber(page)} / ${formatNumber(totalPages)} 页。`
+          : "展示上传文件原始列对应的命中行。";
+        if (!columns.length || !rows.length) {
+          container.innerHTML = "暂无查询";
+          container.classList.add("empty");
+          pagination.innerHTML = "";
+          return;
+        }
+        container.classList.remove("empty");
+        const start = (page - 1) * pageSize;
+        const pageRows = rows.slice(start, start + pageSize);
+        container.innerHTML = `
+          <table>
+            <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+            <tbody>
+              ${pageRows.map((row) => `
+                <tr>${columns.map((column) => `<td>${formatCell(row[column])}</td>`).join("")}</tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+        pagination.innerHTML = `
+          <button type="button" data-page="prev" ${page <= 1 ? "disabled" : ""}>上一页</button>
+          <span>第 ${formatNumber(page)} / ${formatNumber(totalPages)} 页</span>
+          <button type="button" data-page="next" ${page >= totalPages ? "disabled" : ""}>下一页</button>
+        `;
+        pagination.querySelectorAll("button").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.complexQuery.page += button.dataset.page === "prev" ? -1 : 1;
+            renderQueryResultTable(state.complexQuery);
+          });
+        });
       }
 
       function renderCommunityTable(rows) {
@@ -3230,23 +3707,108 @@
         });
       }
 
+      function complexQueryRows(rows, filters = {}, queryValues = {}) {
+        const queryFields = {
+          app_user_id: BORROWER_COL,
+          consigneeMobileId: AGENT_COL,
+          device_id: DEVICE_COL,
+          ip: IP_COL,
+          addr_cluster_id: ADDR_CLUSTER_COL,
+        };
+        const parsedValues = {};
+        for (const [field, rawValue] of Object.entries(queryValues || {})) {
+          if (!queryFields[field]) continue;
+          const values = new Set(String(rawValue || "").split("|").map(normalizeValue).filter(Boolean));
+          if (values.size) parsedValues[field] = values;
+        }
+        const inputCounts = Object.fromEntries(Object.entries(parsedValues).map(([field, values]) => [field, values.size]));
+        const matchedValues = Object.fromEntries(Object.keys(parsedValues).map((field) => [field, new Set()]));
+        const filterMatch = (row) => {
+          const checks = [
+            [RELOAN_COL, filters.reloan_flag],
+            [RETURN_COL, filters.return_flag],
+            [FINAL_RESULT_COL, filters.final_result],
+          ];
+          for (const [column, expectedRaw] of checks) {
+            const expected = normalizeValue(expectedRaw || "all");
+            if (expected !== "all" && normalizeValue(getField(row, column)) !== expected) return false;
+          }
+          return true;
+        };
+        const queryMatch = (row) => {
+          const fields = Object.keys(parsedValues);
+          if (!fields.length) return true;
+          let matched = false;
+          for (const field of fields) {
+            const value = normalizeValue(getField(row, queryFields[field]));
+            if (value && parsedValues[field].has(value)) {
+              matchedValues[field].add(value);
+              matched = true;
+            }
+          }
+          return matched;
+        };
+        const matchedRows = rows.filter((row) => filterMatch(row) && queryMatch(row));
+        const aliasedRows = matchedRows.map(applyAliases);
+        const distinctCount = (canonical) => new Set(aliasedRows.map((row) => normalizeValue(getField(row, canonical))).filter(Boolean)).size;
+        const distinctRaw = (column) => new Set(matchedRows.map((row) => normalizeValue(row[column])).filter(Boolean)).size;
+        const unmatchedValues = {};
+        const matchedValueCounts = {};
+        for (const [field, values] of Object.entries(parsedValues)) {
+          matchedValueCounts[field] = matchedValues[field].size;
+          unmatchedValues[field] = [...values].filter((value) => !matchedValues[field].has(value)).sort((left, right) => left.localeCompare(right, "zh-Hans-CN", { numeric: true }));
+        }
+        return {
+          columns: rows[0] ? Object.keys(rows[0]) : [],
+          rows: matchedRows,
+          summary: {
+            row_count: matchedRows.length,
+            loan_task_id_count: distinctRaw("loan_task_id"),
+            borrower_count: distinctCount(BORROWER_COL),
+            agent_count: distinctCount(AGENT_COL),
+            device_count: distinctCount(DEVICE_COL),
+            ip_count: distinctCount(IP_COL),
+            addr_cluster_count: distinctCount(ADDR_CLUSTER_COL),
+            raw_address_count: distinctRaw("consigneeAddr"),
+            clean_address_count: distinctRaw("receiverAddr"),
+          },
+          input_counts: inputCounts,
+          matched_value_counts: matchedValueCounts,
+          unmatched_values: unmatchedValues,
+        };
+      }
+
       function extractFilterValues(rows, column) {
         return [...new Set(rows.map((row) => normalizeValue(getField(applyAliases(row), column))).filter(Boolean))]
           .sort((left, right) => left.localeCompare(right, "zh-Hans-CN", { numeric: true }));
       }
 
+      function updateFilterOptions(rows) {
+        const reloanValues = extractFilterValues(rows, RELOAN_COL);
+        updateReLoanOptions(reloanValues);
+        updateSelectOptions(queryReloanFilter, reloanValues, "all", reloanLabel);
+        updateSelectOptions(queryReturnFilter, extractFilterValues(rows, RETURN_COL), "all", returnLabel);
+        updateSelectOptions(queryFinalResultFilter, extractFilterValues(rows, FINAL_RESULT_COL), "all", finalResultLabel);
+      }
+
       function updateReLoanOptions(values) {
         if (!reloanFilter) return;
         const selected = state.reloanFilter || "all";
-        const options = [
-          ["all", "全部"],
-          ...values.map((value) => [String(value), reloanLabel(value)]),
-        ];
-        reloanFilter.innerHTML = options
-          .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
-          .join("");
+        updateSelectOptions(reloanFilter, values, selected, reloanLabel);
         state.reloanFilter = values.map(String).includes(selected) ? selected : "all";
         reloanFilter.value = state.reloanFilter;
+      }
+
+      function updateSelectOptions(select, values, selected = "all", labeler = (value) => value) {
+        if (!select) return;
+        const options = [
+          ["all", "全部"],
+          ...values.map((value) => [String(value), labeler(value)]),
+        ];
+        select.innerHTML = options
+          .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
+          .join("");
+        select.value = values.map(String).includes(selected) ? selected : "all";
       }
 
       function reloanLabel(value) {
@@ -3254,6 +3816,19 @@
         if (text === "0") return "首贷 / 0";
         if (text === "1") return "复贷 / 1";
         return text || "空值";
+      }
+
+      function returnLabel(value) {
+        const text = String(value ?? "");
+        if (text === "0") return "未退货 / 0";
+        if (text === "1") return "已退货 / 1";
+        return text || "空值";
+      }
+
+      function finalResultLabel(value) {
+        const text = String(value ?? "");
+        if (text === "30") return "借款通过 / 30";
+        return text ? `未通过 / ${text}` : "空值";
       }
 
       function asBoolish(value) {
