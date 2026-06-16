@@ -22,6 +22,16 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     load_workbook = None
 
+try:
+    import igraph as ig
+except ImportError:  # pragma: no cover - handled at runtime
+    ig = None
+
+try:
+    import leidenalg
+except ImportError:  # pragma: no cover - handled at runtime
+    leidenalg = None
+
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -738,51 +748,65 @@ class RiskGraph:
             adjacency[right][left] = weight
         return adjacency
 
-    def louvain_partition(self, adjacency: dict[str, dict[str, float]], max_iter: int = 20) -> dict[str, str]:
+    def igraph_from_adjacency(
+        self,
+        adjacency: dict[str, dict[str, float]],
+    ) -> tuple[Any, list[str]]:
+        if ig is None:
+            raise ValueError("当前环境缺少 igraph。请先执行：python3 -m pip install -r requirements.txt")
         nodes = sorted(adjacency)
-        communities = {node: node for node in nodes}
-        degree = {node: sum(adjacency.get(node, {}).values()) for node in nodes}
-        total_weight = sum(degree.values()) / 2
-        if total_weight == 0:
-            return self.normalize_partition_ids(communities, "L")
-        community_totals = {node: degree[node] for node in nodes}
+        index = {node: position for position, node in enumerate(nodes)}
+        edges: list[tuple[int, int]] = []
+        weights: list[float] = []
+        for left in nodes:
+            for right, weight in adjacency.get(left, {}).items():
+                if right not in index or left >= right:
+                    continue
+                edges.append((index[left], index[right]))
+                weights.append(float(weight))
+        graph = ig.Graph(n=len(nodes), edges=edges, directed=False)
+        graph.vs["name"] = nodes
+        graph.es["weight"] = weights
+        return graph, nodes
 
-        for _ in range(max_iter):
-            moved = False
-            for node in nodes:
-                old_comm = communities[node]
-                node_degree = degree[node]
-                community_totals[old_comm] = community_totals.get(old_comm, 0) - node_degree
-                neighbor_weights: dict[str, float] = defaultdict(float)
-                for neighbor, weight in adjacency.get(node, {}).items():
-                    neighbor_weights[communities[neighbor]] += weight
+    def partition_from_membership(self, nodes: list[str], membership: list[int], prefix: str) -> dict[str, str]:
+        return self.normalize_partition_ids(
+            {node: str(membership[index]) for index, node in enumerate(nodes)},
+            prefix,
+        )
 
-                best_comm = old_comm
-                best_gain = 0.0
-                for community_id, kin in neighbor_weights.items():
-                    gain = kin - node_degree * community_totals.get(community_id, 0) / (2 * total_weight)
-                    if gain > best_gain:
-                        best_gain = gain
-                        best_comm = community_id
+    def louvain_partition(
+        self,
+        adjacency: dict[str, dict[str, float]],
+        resolution: float = 1.0,
+    ) -> dict[str, str]:
+        graph, nodes = self.igraph_from_adjacency(adjacency)
+        if not nodes:
+            return {}
+        if graph.ecount() == 0:
+            return self.normalize_partition_ids({node: node for node in nodes}, "L")
+        partition = graph.community_multilevel(weights="weight", resolution=resolution)
+        return self.partition_from_membership(nodes, partition.membership, "L")
 
-                communities[node] = best_comm
-                community_totals[best_comm] = community_totals.get(best_comm, 0) + node_degree
-                if best_comm != old_comm:
-                    moved = True
-            if not moved:
-                break
-
-        return self.normalize_partition_ids(communities, "L")
-
-    def leiden_partition(self, adjacency: dict[str, dict[str, float]]) -> dict[str, str]:
-        initial = self.louvain_partition(adjacency)
-        refined = self.split_disconnected_partition(initial, adjacency)
-        grouped: dict[str, set[str]] = defaultdict(set)
-        for node, community_id in refined.items():
-            grouped[community_id].add(node)
-        # A small second pass over the refined graph gives Leiden-like local improvement
-        # while keeping implementation dependency-free for the offline page.
-        return self.normalize_partition_ids(refined, "LD")
+    def leiden_partition(
+        self,
+        adjacency: dict[str, dict[str, float]],
+        resolution: float = 1.0,
+    ) -> dict[str, str]:
+        graph, nodes = self.igraph_from_adjacency(adjacency)
+        if not nodes:
+            return {}
+        if graph.ecount() == 0:
+            return self.normalize_partition_ids({node: node for node in nodes}, "LD")
+        if leidenalg is None:
+            raise ValueError("当前环境缺少 leidenalg。请先执行：python3 -m pip install -r requirements.txt")
+        partition = leidenalg.find_partition(
+            graph,
+            leidenalg.RBConfigurationVertexPartition,
+            weights="weight",
+            resolution_parameter=resolution,
+        )
+        return self.partition_from_membership(nodes, partition.membership, "LD")
 
     def split_disconnected_partition(
         self,
@@ -1086,7 +1110,13 @@ class RiskGraph:
             reverse=True,
         )[:limit]
 
-    def agent_louvain_leiden_communities(self, method: str, basis: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    def agent_louvain_leiden_communities(
+        self,
+        method: str,
+        basis: str | None = None,
+        min_agents: int = 1,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
         adjacency = self.agent_multi_projection()
         partition = self.leiden_partition(adjacency) if method == "leiden" else self.louvain_partition(adjacency)
         groups: dict[str, set[str]] = defaultdict(set)
@@ -1095,6 +1125,7 @@ class RiskGraph:
         communities = [
             self.community_metrics(community_id, agents, adjacency, basis)
             for community_id, agents in groups.items()
+            if len(agents) >= min_agents
         ]
         return sorted(
             communities,
@@ -1109,14 +1140,14 @@ class RiskGraph:
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         if method in {"louvain", "leiden"}:
-            return self.user_communities(method, basis, limit)
-        return self.agent_communities(basis=basis, limit=limit)
+            return self.agent_louvain_leiden_communities(method, basis, min_agents=5, limit=limit)
+        return self.agent_communities(basis=basis, min_agents=5, limit=limit)
 
     def agent_communities(
         self,
         basis: str | None = None,
         min_shared_borrowers: int = 1,
-        min_agents: int = 2,
+        min_agents: int = 5,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         adjacency = self.filtered_agent_projection()
@@ -1611,11 +1642,11 @@ class RiskGraph:
         funded = self.funded_loans(self.loan_rows)
         overdue_total = sum(1 for loan in funded if self.is_overdue(loan, basis))
         if community_method in {"louvain", "leiden"}:
-            communities = self.user_communities(community_method, basis, limit=10_000)
+            communities = self.agent_louvain_leiden_communities(community_method, basis, limit=10_000)
             community_count = len(communities)
-            max_community_size = max((item["borrower_count"] for item in communities), default=0)
+            max_community_size = max((item["agent_count"] for item in communities), default=0)
             max_community_agents = max_community_size
-            community_size_label = "最大用户社区借款人数"
+            community_size_label = "最大团伙中介数"
         else:
             components = self.agent_community_components()
             community_count = len(components)

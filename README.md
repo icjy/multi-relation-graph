@@ -206,9 +206,9 @@ User - AddressCluster
 
 ### 方式三：Leiden
 
-当前实现为不依赖外部库的 Leiden-like 版本：先运行 Louvain，再把社区内部不连通的部分拆开，保证同一社区内部至少连通。它保留了离线快照页可直接打开的能力，不需要安装 `igraph` 或 `leidenalg`。
+服务版使用 `igraph + leidenalg` 跑标准 Leiden。它和 Louvain 都在同一套加权同构图上运行，字段仍按 `(User)` / `(Agent)` 后缀区分视角。
 
-如果后续进入生产环境，建议引入 `igraph + leidenalg` 或 Neo4j GDS 获取标准 Leiden 实现。
+注意：`snapshot.html` 离线快照仍保留轻量算法，便于单文件打开；工业版 Louvain / Leiden 只在 `server.py` 服务端生效。
 
 ## 团伙特征
 
@@ -979,8 +979,8 @@ PR_0(v) = 1 / N
 
 ```text
 连通分量：社区 = 过滤后中介关系图中的中介连通分量
-Louvain：社区 = 用户同构图上的 Louvain 用户社区
-Leiden：社区 = 用户同构图上的 Leiden-like 用户社区
+Louvain：社区 = 用户同构图上的 igraph Louvain 用户社区
+Leiden：社区 = 用户同构图上的 leidenalg 标准 Leiden 用户社区
 ```
 
 当页面选择 Louvain / Leiden 时，宽表还会额外生成一套 `(Agent)` 后缀字段。它们来自未过滤的 Agent-Agent 多关系加权图：
@@ -1050,10 +1050,10 @@ http://127.0.0.1:8000
 PORT=8080 python3 server.py
 ```
 
-Excel 解析依赖 `openpyxl`。如果本机没有安装：
+服务端依赖 `openpyxl`、`igraph` 和 `leidenalg`。如果本机没有安装：
 
 ```bash
-python3 -m pip install openpyxl
+python3 -m pip install -r requirements.txt
 ```
 
 ## 离线快照版

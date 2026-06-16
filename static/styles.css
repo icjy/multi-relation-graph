@@ -33,7 +33,7 @@ select {
 
 .app-shell {
   display: grid;
-  grid-template-columns: minmax(124px, 10vw) minmax(0, 1fr);
+  grid-template-columns: 176px minmax(0, 1fr);
   min-height: 100vh;
   padding-left: 0;
 }
@@ -41,7 +41,7 @@ select {
 .side-nav {
   position: fixed;
   inset: 0 auto 0 0;
-  width: max(124px, 10vw);
+  width: 176px;
   display: grid;
   grid-auto-rows: max-content;
   gap: 10px;
