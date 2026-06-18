@@ -9,8 +9,30 @@ const state = {
   lastFile: null,
   lastFileName: "",
   currentGraph: null,
-  featureTable: { columns: [], rows: [] },
+  featureTable: { columns: [], rows: [], page: 1, pageSize: 50, communityFilter: "" },
   complexQuery: { columns: [], rows: [], summary: {}, input_counts: {}, matched_value_counts: {}, unmatched_values: {}, page: 1, pageSize: 20 },
+  cluster: {
+    mode: "full",
+    pageSize: 50,
+    full: {
+      jobId: "",
+      result: null,
+      detailPage: 1,
+      summaryPage: 1,
+      detailSort: { column: "addr_cluster_id", direction: "asc" },
+      summarySort: { column: "count", direction: "desc" },
+      clusterFilter: "",
+    },
+    incremental: {
+      jobId: "",
+      result: null,
+      detailPage: 1,
+      summaryPage: 1,
+      detailSort: { column: "addr_cluster_id", direction: "asc" },
+      summarySort: { column: "count", direction: "desc" },
+      clusterFilter: "",
+    },
+  },
 };
 const graphHiddenTypes = new Set();
 
@@ -26,6 +48,7 @@ const centerInput = document.querySelector("#centerInput");
 const queryButton = document.querySelector("#queryButton");
 const exportCsvButton = document.querySelector("#exportCsvButton");
 const exportExcelButton = document.querySelector("#exportExcelButton");
+const featureCommunityFilter = document.querySelector("#featureCommunityFilter");
 const analysisProgress = document.querySelector("#analysisProgress");
 const progressTitle = document.querySelector("#progressTitle");
 const progressText = document.querySelector("#progressText");
@@ -46,9 +69,33 @@ const queryAddrValues = document.querySelector("#queryAddrValues");
 const runComplexQueryButton = document.querySelector("#runComplexQuery");
 const clearComplexQueryButton = document.querySelector("#clearComplexQuery");
 const queryPageSize = document.querySelector("#queryPageSize");
+const fullClusterFile = document.querySelector("#fullClusterFile");
+const baseClusterFile = document.querySelector("#baseClusterFile");
+const incrementalClusterFile = document.querySelector("#incrementalClusterFile");
+const fullClusterFileStatus = document.querySelector("#fullClusterFileStatus");
+const baseClusterFileStatus = document.querySelector("#baseClusterFileStatus");
+const incrementalClusterFileStatus = document.querySelector("#incrementalClusterFileStatus");
+const runFullClusterButton = document.querySelector("#runFullCluster");
+const runIncrementalClusterButton = document.querySelector("#runIncrementalCluster");
+const fullClusterTab = document.querySelector("#fullClusterTab");
+const incrementalClusterTab = document.querySelector("#incrementalClusterTab");
+const fullClusterPane = document.querySelector("#fullClusterPane");
+const incrementalClusterPane = document.querySelector("#incrementalClusterPane");
+const clusterProgress = document.querySelector("#clusterProgress");
+const clusterProgressTitle = document.querySelector("#clusterProgressTitle");
+const clusterProgressText = document.querySelector("#clusterProgressText");
+const clusterProgressBar = document.querySelector("#clusterProgressBar");
+const clusterDetailFilter = document.querySelector("#clusterDetailFilter");
+const clusterIndexType = document.querySelector("#clusterIndexType");
+const exportClusterDetailCsv = document.querySelector("#exportClusterDetailCsv");
+const exportClusterDetailExcel = document.querySelector("#exportClusterDetailExcel");
+const exportClusterSummaryCsv = document.querySelector("#exportClusterSummaryCsv");
+const exportClusterSummaryExcel = document.querySelector("#exportClusterSummaryExcel");
+const exportClusterEngineering = document.querySelector("#exportClusterEngineering");
 let progressHideTimer = 0;
 let progressPulseTimer = 0;
 let currentProgress = 0;
+let clusterPollTimer = 0;
 
 navButtons.forEach((button) => {
   button.addEventListener("click", () => switchView(button.dataset.view));
@@ -104,8 +151,32 @@ centerInput.addEventListener("keydown", (event) => {
 centerInput.addEventListener("input", debounce(searchCenters, 240));
 exportCsvButton?.addEventListener("click", () => exportFeatureTable("csv"));
 exportExcelButton?.addEventListener("click", () => exportFeatureTable("xls"));
+featureCommunityFilter?.addEventListener("input", debounce(() => {
+  state.featureTable.communityFilter = featureCommunityFilter.value.trim();
+  state.featureTable.page = 1;
+  renderFeatureTable(state.featureTable);
+}, 180));
 runComplexQueryButton?.addEventListener("click", runComplexQuery);
 clearComplexQueryButton?.addEventListener("click", clearComplexQuery);
+fullClusterFile?.addEventListener("change", () => updateFileStatus(fullClusterFile, fullClusterFileStatus, "未选择文件"));
+baseClusterFile?.addEventListener("change", () => updateFileStatus(baseClusterFile, baseClusterFileStatus, "未选择工程文件"));
+incrementalClusterFile?.addEventListener("change", () => updateFileStatus(incrementalClusterFile, incrementalClusterFileStatus, "未选择增量数据"));
+runFullClusterButton?.addEventListener("click", runFullCluster);
+runIncrementalClusterButton?.addEventListener("click", runIncrementalCluster);
+fullClusterTab?.addEventListener("click", () => setClusterMode("full"));
+incrementalClusterTab?.addEventListener("click", () => setClusterMode("incremental"));
+clusterIndexType?.addEventListener("change", updateIncrementalParamVisibility);
+clusterDetailFilter?.addEventListener("input", debounce(() => {
+  const scope = currentClusterState();
+  scope.clusterFilter = clusterDetailFilter.value.trim();
+  scope.detailPage = 1;
+  renderClusterDetailTable();
+}, 180));
+exportClusterDetailCsv?.addEventListener("click", () => exportClusterTable("detail", "csv"));
+exportClusterDetailExcel?.addEventListener("click", () => exportClusterTable("detail", "xls"));
+exportClusterSummaryCsv?.addEventListener("click", () => exportClusterTable("summary", "csv"));
+exportClusterSummaryExcel?.addEventListener("click", () => exportClusterTable("summary", "xls"));
+exportClusterEngineering?.addEventListener("click", exportClusterEngineeringFile);
 queryPageSize?.addEventListener("change", () => {
   state.complexQuery.pageSize = Number(queryPageSize.value) || 20;
   state.complexQuery.page = 1;
@@ -118,6 +189,45 @@ function setCenterType(type) {
   agentMode.classList.toggle("active", type === "agent");
 }
 
+function setClusterMode(mode) {
+  const isFull = mode === "full";
+  state.cluster.mode = isFull ? "full" : "incremental";
+  fullClusterTab?.classList.toggle("active", isFull);
+  incrementalClusterTab?.classList.toggle("active", !isFull);
+  if (fullClusterPane) fullClusterPane.hidden = !isFull;
+  if (incrementalClusterPane) incrementalClusterPane.hidden = isFull;
+  const scope = currentClusterState();
+  if (clusterDetailFilter) clusterDetailFilter.value = scope.clusterFilter || "";
+  renderClusterResult();
+  updateIncrementalParamVisibility();
+}
+
+function currentClusterState() {
+  return state.cluster[state.cluster.mode] || state.cluster.full;
+}
+
+function updateFileStatus(input, target, emptyText) {
+  if (!target) return;
+  const file = input?.files?.[0];
+  if (!file) {
+    target.textContent = emptyText;
+    target.classList.remove("loaded");
+    return;
+  }
+  target.textContent = `已选择：${file.name}（${formatFileSize(file.size)}）`;
+  target.classList.add("loaded");
+}
+
+function updateIncrementalParamVisibility() {
+  const type = String(clusterIndexType?.value || "FlatL2").toLowerCase();
+  document.querySelectorAll(".index-param-hnsw").forEach((item) => {
+    item.hidden = type !== "hnsw";
+  });
+  document.querySelectorAll(".index-param-ivf").forEach((item) => {
+    item.hidden = type !== "ivf";
+  });
+}
+
 function switchView(viewId) {
   navButtons.forEach((button) => button.classList.toggle("active", button.dataset.view === viewId));
   views.forEach((view) => {
@@ -125,9 +235,11 @@ function switchView(viewId) {
     view.classList.toggle("active", isActive);
     view.hidden = !isActive;
   });
+  if (viewId === "addressCluster") renderClusterResult();
 }
 
 switchView("graphView");
+updateIncrementalParamVisibility();
 
 function setNavHidden(hidden) {
   appShell?.classList.toggle("nav-hidden", hidden);
@@ -229,7 +341,14 @@ async function searchCenters() {
 }
 
 function renderAll(data) {
-  state.featureTable = data.feature_table || { columns: [], rows: [] };
+  const currentFeatureState = state.featureTable || {};
+  state.featureTable = {
+    ...(data.feature_table || { columns: [], rows: [] }),
+    page: 1,
+    pageSize: currentFeatureState.pageSize || 50,
+    communityFilter: currentFeatureState.communityFilter || "",
+  };
+  if (featureCommunityFilter) featureCommunityFilter.value = state.featureTable.communityFilter;
   updateFilterOptions(data.filter_options || {});
   renderSummary(data.summary);
   renderGraph(data.graph);
@@ -384,30 +503,74 @@ function renderMetrics(graph) {
 
 function renderFeatureTable(featureTable) {
   const container = document.querySelector("#featureTable");
+  const pagination = document.querySelector("#featurePagination");
   const subtitle = document.querySelector("#featureSubtitle");
-  if (!container) return;
+  if (!container || !pagination) return;
   const columns = featureTable?.columns || [];
-  const rows = featureTable?.rows || [];
-  subtitle.textContent = rows.length
-    ? `共 ${formatNumber(rows.length)} 行，${formatNumber(columns.length)} 列；页面预览前 100 行，导出为全量。`
+  const rows = filteredFeatureRows(featureTable);
+  const rawRows = featureTable?.rows || [];
+  const pageSize = Number(featureTable.pageSize || 50);
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(Math.max(1, Number(featureTable.page || 1)), totalPages);
+  featureTable.page = page;
+  const filterText = String(featureTable.communityFilter || "").trim();
+  subtitle.textContent = rawRows.length
+    ? `共 ${formatNumber(rawRows.length)} 行，${formatNumber(columns.length)} 列；${filterText ? `筛选命中 ${formatNumber(rows.length)} 行；` : ""}当前第 ${formatNumber(page)} / ${formatNumber(totalPages)} 页。`
     : "上传数据后生成原始字段 + 加工特征";
-  if (!columns.length || !rows.length) {
+  if (!columns.length || !rawRows.length) {
     container.innerHTML = "暂无数据";
     container.classList.add("empty");
+    pagination.innerHTML = "";
+    return;
+  }
+  if (!rows.length) {
+    container.innerHTML = "无匹配结果";
+    container.classList.add("empty");
+    pagination.innerHTML = "";
     return;
   }
   container.classList.remove("empty");
-  const previewRows = rows.slice(0, 100);
+  const start = (page - 1) * pageSize;
+  const pageRows = rows.slice(start, start + pageSize);
   container.innerHTML = `
     <table>
       <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
       <tbody>
-        ${previewRows.map((row) => `
+        ${pageRows.map((row) => `
           <tr>${columns.map((column) => `<td>${formatCell(row[column])}</td>`).join("")}</tr>
         `).join("")}
       </tbody>
     </table>
   `;
+  pagination.innerHTML = `
+    <button type="button" data-page="prev" ${page <= 1 ? "disabled" : ""}>上一页</button>
+    <span>第 ${formatNumber(page)} / ${formatNumber(totalPages)} 页</span>
+    <label class="page-jump">跳至 <input type="number" min="1" max="${totalPages}" value="${page}" aria-label="跳转页码" /> 页</label>
+    <button type="button" data-page="next" ${page >= totalPages ? "disabled" : ""}>下一页</button>
+  `;
+  pagination.querySelectorAll("button").forEach((button) => {
+    button.addEventListener("click", () => {
+      featureTable.page += button.dataset.page === "prev" ? -1 : 1;
+      renderFeatureTable(featureTable);
+    });
+  });
+  bindPaginationJump(pagination, totalPages, (targetPage) => {
+    featureTable.page = targetPage;
+    renderFeatureTable(featureTable);
+  });
+}
+
+function filteredFeatureRows(featureTable) {
+  const rows = featureTable?.rows || [];
+  const filterText = String(featureTable?.communityFilter || "").trim();
+  if (!filterText) return rows;
+  const columns = featureTable?.columns || [];
+  const communityColumn = columns.includes("社区id(Agent)")
+    ? "社区id(Agent)"
+    : columns.find((column) => String(column).toLowerCase() === "社区id(agent)")
+      || columns.find((column) => String(column).startsWith("社区id"));
+  if (!communityColumn) return [];
+  return rows.filter((row) => String(row[communityColumn] ?? "") === filterText);
 }
 
 async function runComplexQuery() {
@@ -564,6 +727,7 @@ function renderQueryResultTable(result) {
   pagination.innerHTML = `
     <button type="button" data-page="prev" ${page <= 1 ? "disabled" : ""}>上一页</button>
     <span>第 ${formatNumber(page)} / ${formatNumber(totalPages)} 页</span>
+    <label class="page-jump">跳至 <input type="number" min="1" max="${totalPages}" value="${page}" aria-label="跳转页码" /> 页</label>
     <button type="button" data-page="next" ${page >= totalPages ? "disabled" : ""}>下一页</button>
   `;
   pagination.querySelectorAll("button").forEach((button) => {
@@ -572,6 +736,336 @@ function renderQueryResultTable(result) {
       renderQueryResultTable(state.complexQuery);
     });
   });
+  bindPaginationJump(pagination, totalPages, (targetPage) => {
+    state.complexQuery.page = targetPage;
+    renderQueryResultTable(state.complexQuery);
+  });
+}
+
+async function runFullCluster() {
+  const file = fullClusterFile?.files?.[0];
+  if (!file) {
+    showToast("请先选择全量聚类数据");
+    return;
+  }
+  try {
+    showClusterProgress(5, "准备全量聚类", "正在读取文件");
+    const contentBase64 = await fileToBase64(file);
+    const response = await postJson("/api/cluster/full", {
+      filename: file.name,
+      content_base64: contentBase64,
+      params: fullClusterParams(),
+    });
+    state.cluster.full.jobId = response.job_id;
+    pollClusterJob(response.job_id, "full");
+  } catch (error) {
+    hideClusterProgress();
+    showToast(error.message || String(error));
+  }
+}
+
+async function runIncrementalCluster() {
+  const baseFile = baseClusterFile?.files?.[0];
+  const incrementalFile = incrementalClusterFile?.files?.[0];
+  if (!baseFile || !incrementalFile) {
+    showToast("请同时选择工程文件和增量数据");
+    return;
+  }
+  try {
+    showClusterProgress(5, "准备增量聚类", "正在读取工程文件和增量数据");
+    const [baseContent, incrementalContent] = await Promise.all([
+      fileToBase64(baseFile),
+      fileToBase64(incrementalFile),
+    ]);
+    const response = await postJson("/api/cluster/incremental", {
+      base_filename: baseFile.name,
+      base_content_base64: baseContent,
+      incremental_filename: incrementalFile.name,
+      incremental_content_base64: incrementalContent,
+      params: incrementalClusterParams(),
+    });
+    state.cluster.incremental.jobId = response.job_id;
+    pollClusterJob(response.job_id, "incremental");
+  } catch (error) {
+    hideClusterProgress();
+    showToast(error.message || String(error));
+  }
+}
+
+function fullClusterParams() {
+  return {
+    model: document.querySelector("#clusterModel")?.value || "paraphrase-multilingual-MiniLM-L12-v2",
+    eps: Number(document.querySelector("#clusterEps")?.value || 0.68),
+    min_samples: Number(document.querySelector("#clusterMinSamples")?.value || 1),
+    metric: document.querySelector("#clusterMetric")?.value || "euclidean",
+    normalize: Boolean(document.querySelector("#clusterNormalize")?.checked),
+  };
+}
+
+function incrementalClusterParams() {
+  return {
+    index_type: document.querySelector("#clusterIndexType")?.value || "FlatL2",
+    threshold: Number(document.querySelector("#clusterThreshold")?.value || 0.68),
+    normalize: Boolean(document.querySelector("#clusterNormalize")?.checked),
+    hnsw_m: Number(document.querySelector("#clusterHnswM")?.value || 32),
+    hnsw_ef_search: Number(document.querySelector("#clusterHnswEf")?.value || 64),
+    ivf_nlist: Number(document.querySelector("#clusterIvfNlist")?.value || 64),
+    ivf_nprobe: Number(document.querySelector("#clusterIvfNprobe")?.value || 8),
+  };
+}
+
+async function pollClusterJob(jobId, mode) {
+  window.clearTimeout(clusterPollTimer);
+  try {
+    const status = await postJson("/api/cluster/status", { job_id: jobId });
+    showClusterProgress(status.progress || 0, status.status === "error" ? "聚类失败" : "聚类任务运行中", status.message || "");
+    if (status.status === "done") {
+      const result = await postJson("/api/cluster/result", { job_id: jobId });
+      const scope = state.cluster[mode] || currentClusterState();
+      scope.result = result;
+      scope.detailPage = 1;
+      scope.summaryPage = 1;
+      scope.clusterFilter = "";
+      if (state.cluster.mode === mode) {
+        if (clusterDetailFilter) clusterDetailFilter.value = "";
+        renderClusterResult();
+      }
+      showClusterProgress(100, "聚类完成", "结果已生成");
+      window.setTimeout(hideClusterProgress, 900);
+      showToast("地址聚类完成");
+      return;
+    }
+    if (status.status === "error") {
+      if (status.error_detail) console.error(status.error_detail);
+      showToast(status.error || status.message || "聚类失败");
+      return;
+    }
+    clusterPollTimer = window.setTimeout(() => pollClusterJob(jobId, mode), 900);
+  } catch (error) {
+    showToast(error.message || String(error));
+  }
+}
+
+function showClusterProgress(percent, title, detail) {
+  if (!clusterProgress) return;
+  clusterProgress.hidden = false;
+  const value = Math.max(0, Math.min(100, Number(percent) || 0));
+  clusterProgressTitle.textContent = title;
+  clusterProgressText.textContent = detail;
+  clusterProgressBar.style.width = `${value}%`;
+  clusterProgress.querySelector(".progress-track")?.setAttribute("aria-valuenow", String(Math.round(value)));
+}
+
+function hideClusterProgress() {
+  if (!clusterProgress) return;
+  clusterProgress.hidden = true;
+  clusterProgressBar.style.width = "0%";
+}
+
+function renderClusterResult() {
+  renderClusterSummaryCards();
+  renderClusterDetailTable();
+  renderClusterSummaryTable();
+}
+
+function renderClusterSummaryCards() {
+  const container = document.querySelector("#clusterSummary");
+  const result = currentClusterState().result;
+  if (!container) return;
+  if (!result) {
+    container.innerHTML = "";
+    return;
+  }
+  const stats = result.stats || {};
+  const params = result.params || {};
+  const items = [
+    ["模式", params.mode === "incremental" ? "增量" : "全量"],
+    ["样本数", formatNumber(stats.row_count)],
+    ["簇数量", formatNumber(stats.cluster_count)],
+    ["噪声数", formatNumber(stats.noise_count || 0)],
+    ["模型", params.model || "-"],
+    ["阈值/eps", params.threshold ?? params.eps ?? "-"],
+  ];
+  container.innerHTML = items.map(([label, value]) => `
+    <div class="summary-card">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `).join("");
+}
+
+function clusterRows(kind) {
+  const scope = currentClusterState();
+  const table = kind === "summary" ? scope.result?.summary_table : scope.result?.detail_table;
+  const rows = [...(table?.rows || [])];
+  const filter = String(scope.clusterFilter || "").trim();
+  if (kind === "detail" && filter) {
+    return rows.filter((row) => String(row.addr_cluster_id).includes(filter));
+  }
+  return rows;
+}
+
+function sortedClusterRows(kind) {
+  const rows = clusterRows(kind);
+  const scope = currentClusterState();
+  const sort = kind === "summary" ? scope.summarySort : scope.detailSort;
+  const direction = sort.direction === "desc" ? -1 : 1;
+  return rows.sort((left, right) => compareValues(left[sort.column], right[sort.column]) * direction);
+}
+
+function compareValues(left, right) {
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  if (!Number.isNaN(leftNumber) && !Number.isNaN(rightNumber)) return leftNumber - rightNumber;
+  return String(left ?? "").localeCompare(String(right ?? ""), "zh-CN");
+}
+
+function renderClusterDetailTable() {
+  renderPagedClusterTable({
+    kind: "detail",
+    containerSelector: "#clusterDetailTable",
+    paginationSelector: "#clusterDetailPagination",
+    subtitleSelector: "#clusterDetailSubtitle",
+    pageKey: "detailPage",
+    sortKey: "detailSort",
+    emptyText: "暂无聚类明细",
+  });
+}
+
+function renderClusterSummaryTable() {
+  renderPagedClusterTable({
+    kind: "summary",
+    containerSelector: "#clusterSummaryTable",
+    paginationSelector: "#clusterSummaryPagination",
+    subtitleSelector: "#clusterSummarySubtitle",
+    pageKey: "summaryPage",
+    sortKey: "summarySort",
+    emptyText: "暂无聚类汇总",
+  });
+}
+
+function renderPagedClusterTable(config) {
+  const container = document.querySelector(config.containerSelector);
+  const pagination = document.querySelector(config.paginationSelector);
+  const subtitle = document.querySelector(config.subtitleSelector);
+  const scope = currentClusterState();
+  const table = config.kind === "summary" ? scope.result?.summary_table : scope.result?.detail_table;
+  if (!container || !pagination || !subtitle) return;
+  const columns = table?.columns || [];
+  const rows = sortedClusterRows(config.kind);
+  const pageSize = state.cluster.pageSize;
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(Math.max(1, Number(scope[config.pageKey] || 1)), totalPages);
+  scope[config.pageKey] = page;
+  subtitle.textContent = rows.length
+    ? `共 ${formatNumber(rows.length)} 行；当前第 ${formatNumber(page)} / ${formatNumber(totalPages)} 页。`
+    : config.emptyText;
+  if (!columns.length || !rows.length) {
+    container.innerHTML = config.emptyText;
+    container.classList.add("empty");
+    pagination.innerHTML = "";
+    return;
+  }
+  container.classList.remove("empty");
+  const sort = scope[config.sortKey];
+  const start = (page - 1) * pageSize;
+  const pageRows = rows.slice(start, start + pageSize);
+  container.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          ${columns.map((column) => `
+            <th><button class="sortable-th" type="button" data-column="${escapeHtml(column)}">${escapeHtml(column)}${sort.column === column ? (sort.direction === "asc" ? " ↑" : " ↓") : ""}</button></th>
+          `).join("")}
+        </tr>
+      </thead>
+      <tbody>
+        ${pageRows.map((row) => `<tr>${columns.map((column) => `<td>${formatCell(row[column])}</td>`).join("")}</tr>`).join("")}
+      </tbody>
+    </table>
+  `;
+  container.querySelectorAll(".sortable-th").forEach((button) => {
+    button.addEventListener("click", () => {
+      const column = button.dataset.column;
+      const current = scope[config.sortKey];
+      scope[config.sortKey] = {
+        column,
+        direction: current.column === column && current.direction === "asc" ? "desc" : "asc",
+      };
+      scope[config.pageKey] = 1;
+      renderPagedClusterTable(config);
+    });
+  });
+  pagination.innerHTML = `
+    <button type="button" data-page="prev" ${page <= 1 ? "disabled" : ""}>上一页</button>
+    <span>第 ${formatNumber(page)} / ${formatNumber(totalPages)} 页</span>
+    <label class="page-jump">跳至 <input type="number" min="1" max="${totalPages}" value="${page}" aria-label="跳转页码" /> 页</label>
+    <button type="button" data-page="next" ${page >= totalPages ? "disabled" : ""}>下一页</button>
+  `;
+  pagination.querySelectorAll("button").forEach((button) => {
+    button.addEventListener("click", () => {
+      scope[config.pageKey] += button.dataset.page === "prev" ? -1 : 1;
+      renderPagedClusterTable(config);
+    });
+  });
+  bindPaginationJump(pagination, totalPages, (targetPage) => {
+    scope[config.pageKey] = targetPage;
+    renderPagedClusterTable(config);
+  });
+}
+
+function bindPaginationJump(container, totalPages, onJump) {
+  const input = container.querySelector(".page-jump input");
+  if (!input) return;
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const rawPage = Number(input.value || 1);
+    const targetPage = Math.min(Math.max(1, Math.floor(rawPage || 1)), totalPages);
+    input.value = String(targetPage);
+    onJump(targetPage);
+  });
+}
+
+function exportClusterTable(kind, format) {
+  const result = currentClusterState().result;
+  const table = kind === "summary" ? result?.summary_table : result?.detail_table;
+  if (!table?.columns?.length || !table?.rows?.length) {
+    showToast("暂无可导出的聚类结果");
+    return;
+  }
+  const rows = sortedClusterRows(kind);
+  const name = kind === "summary" ? "cluster_summary" : "cluster_detail";
+  exportRows(`${name}_${timestamp()}`, table.columns, rows, format);
+}
+
+function exportRows(filenameBase, columns, rows, format) {
+  if (format === "xls") {
+    const html = `
+      <html><head><meta charset="utf-8" /></head><body>
+        <table>
+          <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+          <tbody>${rows.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody>
+        </table>
+      </body></html>
+    `;
+    downloadBlob(`${filenameBase}.xls`, html, "application/vnd.ms-excel;charset=utf-8");
+    return;
+  }
+  const csv = "\ufeff" + [
+    columns.map(csvEscape).join(","),
+    ...rows.map((row) => columns.map((column) => csvEscape(row[column])).join(",")),
+  ].join("\n");
+  downloadBlob(`${filenameBase}.csv`, csv, "text/csv;charset=utf-8");
+}
+
+function exportClusterEngineeringFile() {
+  const payload = currentClusterState().result?.engineering_file;
+  if (!payload) {
+    showToast("暂无可导出的工程文件");
+    return;
+  }
+  downloadBlob(`cluster_engineering_${timestamp()}.json`, JSON.stringify(payload), "application/json;charset=utf-8");
 }
 
 function renderCommunityTable(rows) {
@@ -930,6 +1424,13 @@ async function postJson(url, payload) {
 function formatNumber(value) {
   const number = Number(value || 0);
   return number.toLocaleString("zh-CN");
+}
+
+function formatFileSize(size) {
+  const bytes = Number(size || 0);
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
 }
 
 function formatPercent(value) {

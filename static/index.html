@@ -15,6 +15,7 @@
         </div>
         <button id="navToggle" class="nav-collapse" type="button" aria-label="隐藏导航">-</button>
         <button class="nav-button active" type="button" data-view="graphView">图谱分析</button>
+        <button class="nav-button" type="button" data-view="addressCluster">地址聚类</button>
         <button class="nav-button" type="button" data-view="complexQuery">复杂查询</button>
         <button class="nav-button" type="button" data-view="featureGuide">特征说明</button>
       </aside>
@@ -152,11 +153,177 @@
               <p id="featureSubtitle">上传数据后生成原始字段 + 加工特征</p>
             </div>
             <div class="feature-actions">
+              <label class="feature-filter-label">
+                社区id(Agent)
+                <input id="featureCommunityFilter" type="search" placeholder="输入社区id自动筛选" autocomplete="off" />
+              </label>
               <button id="exportCsvButton" class="secondary" type="button">导出 CSV</button>
               <button id="exportExcelButton" class="secondary" type="button">导出 Excel</button>
             </div>
           </div>
           <div id="featureTable" class="feature-table empty">暂无数据</div>
+          <div id="featurePagination" class="pagination"></div>
+        </section>
+      </section>
+
+      <section id="addressCluster" class="workspace view cluster-view" hidden>
+        <header class="topbar">
+          <div>
+            <h1>地址聚类</h1>
+            <p>上传地址明细执行全量 DBSCAN 或增量 FAISS 聚类，生成 receiverAddr 与 addr_cluster_id。</p>
+          </div>
+        </header>
+
+        <div class="cluster-tabs segment" role="group" aria-label="地址聚类模式">
+          <button id="fullClusterTab" class="active" type="button" data-cluster-mode="full">全量聚类</button>
+          <button id="incrementalClusterTab" type="button" data-cluster-mode="incremental">增量聚类</button>
+        </div>
+
+        <section id="fullClusterPane" class="cluster-layout">
+          <article class="cluster-panel">
+            <div class="feature-head">
+              <div>
+                <h2>全量聚类</h2>
+                <p>对上传文件中的 consigneeAddr / receiverAddr 全量编码后运行 DBSCAN。</p>
+              </div>
+            </div>
+            <label class="upload-button cluster-file">
+              <input id="fullClusterFile" type="file" accept=".csv,.xlsx,.xlsm,.xltx,.xltm" />
+              选择全量数据
+            </label>
+            <div id="fullClusterFileStatus" class="file-status">未选择文件</div>
+            <div class="cluster-params">
+              <label>
+                模型
+                <select id="clusterModel">
+                  <option value="paraphrase-multilingual-MiniLM-L12-v2">paraphrase-multilingual-MiniLM-L12-v2</option>
+                </select>
+              </label>
+              <label>
+                eps
+                <input id="clusterEps" type="number" min="0" step="0.01" value="0.68" />
+              </label>
+              <label>
+                min_samples
+                <input id="clusterMinSamples" type="number" min="1" step="1" value="1" />
+              </label>
+              <label>
+                metric
+                <select id="clusterMetric">
+                  <option value="euclidean">euclidean</option>
+                  <option value="cosine">cosine</option>
+                </select>
+              </label>
+              <label class="check-label">
+                <input id="clusterNormalize" type="checkbox" checked />
+                向量归一化
+              </label>
+            </div>
+            <button id="runFullCluster" class="primary" type="button">运行全量聚类</button>
+          </article>
+        </section>
+
+        <section id="incrementalClusterPane" class="cluster-layout" hidden>
+          <article class="cluster-panel">
+            <div class="feature-head">
+              <div>
+                <h2>增量聚类</h2>
+                <p>导入工程文件和增量数据，按序匹配历史地址向量并更新索引。</p>
+              </div>
+            </div>
+            <div class="cluster-file-grid">
+              <label class="upload-button cluster-file">
+                <input id="baseClusterFile" type="file" accept=".json" />
+                选择工程文件
+              </label>
+              <div id="baseClusterFileStatus" class="file-status">未选择工程文件</div>
+              <label class="upload-button cluster-file">
+                <input id="incrementalClusterFile" type="file" accept=".csv,.xlsx,.xlsm,.xltx,.xltm" />
+                选择增量数据
+              </label>
+              <div id="incrementalClusterFileStatus" class="file-status">未选择增量数据</div>
+            </div>
+            <div class="cluster-params">
+              <label>
+                index 类型
+                <select id="clusterIndexType">
+                  <option value="FlatL2">FlatL2</option>
+                  <option value="HNSW">HNSW</option>
+                  <option value="IVF">IVF</option>
+                </select>
+              </label>
+              <label>
+                threshold
+                <input id="clusterThreshold" type="number" min="0" step="0.01" value="0.68" />
+              </label>
+              <label class="index-param index-param-hnsw">
+                HNSW M
+                <input id="clusterHnswM" type="number" min="1" step="1" value="32" />
+              </label>
+              <label class="index-param index-param-hnsw">
+                efSearch
+                <input id="clusterHnswEf" type="number" min="1" step="1" value="64" />
+              </label>
+              <label class="index-param index-param-ivf">
+                IVF nlist
+                <input id="clusterIvfNlist" type="number" min="1" step="1" value="64" />
+              </label>
+              <label class="index-param index-param-ivf">
+                nprobe
+                <input id="clusterIvfNprobe" type="number" min="1" step="1" value="8" />
+              </label>
+            </div>
+            <button id="runIncrementalCluster" class="primary" type="button">运行增量聚类</button>
+          </article>
+        </section>
+
+        <section id="clusterProgress" class="analysis-progress" aria-live="polite" hidden>
+          <div class="progress-copy">
+            <strong id="clusterProgressTitle">准备聚类</strong>
+            <span id="clusterProgressText">等待任务开始</span>
+          </div>
+          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <span id="clusterProgressBar"></span>
+          </div>
+        </section>
+
+        <section id="clusterSummary" class="summary-grid query-summary"></section>
+
+        <section class="cluster-results">
+          <article class="query-section">
+            <div class="feature-head">
+              <div>
+                <h2>聚类明细表</h2>
+                <p id="clusterDetailSubtitle">展示原始数据并拼接 receiverAddr、addr_cluster_id。</p>
+              </div>
+              <div class="feature-actions">
+                <label class="cluster-filter-label">
+                  筛选簇
+                  <input id="clusterDetailFilter" type="search" placeholder="输入 cluster_id，如 10" autocomplete="off" />
+                </label>
+                <button id="exportClusterDetailCsv" class="secondary" type="button">导出 CSV</button>
+                <button id="exportClusterDetailExcel" class="secondary" type="button">导出 Excel</button>
+              </div>
+            </div>
+            <div id="clusterDetailTable" class="feature-table empty">暂无聚类结果</div>
+            <div id="clusterDetailPagination" class="pagination"></div>
+          </article>
+
+          <article class="query-section">
+            <div class="feature-head">
+              <div>
+                <h2>聚类汇总表</h2>
+                <p id="clusterSummarySubtitle">每个地址簇的样例地址和聚类数量。</p>
+              </div>
+              <div class="feature-actions">
+                <button id="exportClusterSummaryCsv" class="secondary" type="button">导出 CSV</button>
+                <button id="exportClusterSummaryExcel" class="secondary" type="button">导出 Excel</button>
+                <button id="exportClusterEngineering" class="secondary" type="button">导出工程文件</button>
+              </div>
+            </div>
+            <div id="clusterSummaryTable" class="feature-table empty">暂无聚类结果</div>
+            <div id="clusterSummaryPagination" class="pagination"></div>
+          </article>
         </section>
       </section>
 

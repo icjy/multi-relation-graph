@@ -14,6 +14,7 @@
 - 支持在页面选择社区算法：连通分量、Louvain、Leiden
 - 生成社区大小、社区坏账率、中心性等团伙特征
 - 在前端页面展示指标、Top 列表和关系图谱
+- 支持地址聚类模块：全量 DBSCAN 聚类、增量 FAISS 聚类、结果表和工程文件导出
 
 ## 数据字段
 
@@ -305,6 +306,10 @@ server.py
 POST /api/analyze   上传文件并分析
 POST /api/graph     查询某个中心节点的图谱
 POST /api/search    搜索手机号节点
+POST /api/cluster/full          提交全量地址聚类任务
+POST /api/cluster/incremental   提交增量地址聚类任务
+POST /api/cluster/status        查询聚类任务进度
+POST /api/cluster/result        获取聚类任务结果
 ```
 
 ### 2. 实现文件上传解析
@@ -319,6 +324,35 @@ POST /api/search    搜索手机号节点
 ```
 
 当前不支持旧版 `.xls`，建议另存为 `.xlsx` 或 CSV 后上传。
+
+### 2.1 地址聚类模块
+
+页面导航中的「地址聚类」用于在系统内生成 `receiverAddr` 和 `addr_cluster_id`。
+
+全量聚类：
+
+- 输入文件使用 `consigneeAddr` / `receiverAddr` 作为地址来源。
+- 地址清洗逻辑参考 `dbscan.txt`：小写、去空白、去 `-`、统一括号和冒号、去掉“地址/电话/姓名”等前缀。
+- embedding 模型当前固定为 `paraphrase-multilingual-MiniLM-L12-v2`，页面保留模型选择入口，后续可扩展其他模型。
+- 聚类算法使用 `DBSCAN`，页面可调 `eps`、`min_samples`、`metric`、是否归一化。
+- 输出明细表 = 原始列 + `receiverAddr` + `addr_cluster_id`；输出汇总表 = `addr_cluster_id`、样例地址、数量。
+
+增量聚类：
+
+- 需要导入上一次导出的工程文件 `.json`，以及本次增量数据。
+- 工程文件包含历史 `receiverAddr`、`addr_cluster_id`、embedding 和参数，用于重建历史向量索引。
+- 当前检索对象为历史地址向量，不是簇中心向量。
+- 新地址按输入顺序逐条处理：先编码，再用 FAISS 找最近历史地址；距离小于等于 `threshold` 时继承最近邻的 `addr_cluster_id`，否则新建 `addr_cluster_id`；随后把该新地址向量加入索引，再处理下一条。
+- 页面可选 FAISS index 类型：`FlatL2`、`HNSW`、`IVF`。`HNSW` 可调 `M / efSearch`，`IVF` 可调 `nlist / nprobe`。
+- `threshold` 是增量阶段的 L2 距离阈值，值越小越严格。
+
+导出：
+
+- 明细表支持 CSV / Excel。
+- 汇总表支持 CSV / Excel。
+- 工程文件支持 JSON，用于下次增量聚类。
+
+由于 embedding、DBSCAN 和 FAISS 可能耗时较长，地址聚类使用异步任务模式：提交任务后返回 `job_id`，前端轮询任务进度，完成后再拉取结果。
 
 ### 3. 清洗字段和手机号
 
@@ -1050,7 +1084,7 @@ http://127.0.0.1:8000
 PORT=8080 python3 server.py
 ```
 
-服务端依赖 `openpyxl`、`igraph` 和 `leidenalg`。如果本机没有安装：
+服务端依赖 `openpyxl`、`igraph`、`leidenalg`、`numpy`、`scikit-learn`、`sentence-transformers` 和 `faiss-cpu`。如果本机没有安装：
 
 ```bash
 python3 -m pip install -r requirements.txt
@@ -1065,6 +1099,8 @@ snapshot.html
 ```
 
 这个文件是一个单文件离线页面，包含页面样式、计算逻辑和图谱渲染逻辑。它不依赖 `server.py`，后续修改服务端或前端源码不会影响这个快照文件。
+
+注意：地址聚类依赖后端模型加载、向量计算和 FAISS 索引，不适合放进单文件离线快照；请使用服务版页面访问「地址聚类」模块。
 
 使用方式：
 

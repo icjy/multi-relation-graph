@@ -8,6 +8,11 @@ import math
 import mimetypes
 import os
 import re
+import subprocess
+import sys
+import tempfile
+import threading
+import traceback
 import uuid
 from collections import defaultdict
 from datetime import date, datetime, time
@@ -16,6 +21,9 @@ from itertools import combinations
 from pathlib import Path
 from decimal import Decimal
 from typing import Any
+
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 try:
     from openpyxl import load_workbook
@@ -31,6 +39,31 @@ try:
     import leidenalg
 except ImportError:  # pragma: no cover - handled at runtime
     leidenalg = None
+
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - handled at runtime
+    np = None
+
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:  # pragma: no cover - handled at runtime
+    SentenceTransformer = None
+
+try:
+    from sklearn.cluster import DBSCAN
+except ImportError:  # pragma: no cover - handled at runtime
+    DBSCAN = None
+
+try:
+    from sklearn.preprocessing import normalize as sklearn_normalize
+except ImportError:  # pragma: no cover - handled at runtime
+    sklearn_normalize = None
+
+try:
+    import faiss
+except ImportError:  # pragma: no cover - handled at runtime
+    faiss = None
 
 
 ROOT = Path(__file__).resolve().parent
@@ -104,6 +137,12 @@ FIELD_ALIASES = {
 }
 
 DATASETS: dict[str, dict[str, Any]] = {}
+CLUSTER_JOBS: dict[str, dict[str, Any]] = {}
+CLUSTER_JOBS_LOCK = threading.Lock()
+EMBEDDING_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
+EMBEDDING_MODEL: Any = None
+EMBEDDING_MODEL_LOCK = threading.Lock()
+EMBEDDING_CACHE: dict[str, list[float]] = {}
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
@@ -173,6 +212,153 @@ def normalize_value(value: Any) -> str:
     if re.fullmatch(r"\d+\.0", text):
         text = text[:-2]
     return text
+
+
+def clean_receiver_address(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    text = str(value).lower()
+    text = re.sub(r"[\-]", "", text)
+    text = re.sub(r"\s+", "", text)
+    text = text.replace("\u3000", "")
+    text = text.replace("（", "(").replace("）", ")")
+    text = text.replace("：", ":").replace(":", "")
+    text = text.replace("(", "").replace(")", "")
+    text = re.sub(r"(地址|电话|姓名)", "", text)
+    return text
+
+
+def require_clustering_dependencies(incremental: bool = False) -> None:
+    missing: list[str] = []
+    if np is None:
+        missing.append("numpy")
+    if SentenceTransformer is None:
+        missing.append("sentence-transformers")
+    if DBSCAN is None:
+        missing.append("scikit-learn")
+    if sklearn_normalize is None:
+        missing.append("scikit-learn")
+    if incremental and faiss is None:
+        missing.append("faiss-cpu")
+    if missing:
+        raise ValueError(f"当前环境缺少地址聚类依赖：{', '.join(sorted(set(missing)))}。请执行：python3 -m pip install -r requirements.txt")
+
+
+def short_error(exc: Exception) -> str:
+    text = str(exc).replace("\n", " ").strip()
+    return text[:700] + ("..." if len(text) > 700 else "")
+
+
+def short_text(value: Any, limit: int = 700) -> str:
+    text = str(value).replace("\n", " ").strip()
+    return text[:limit] + ("..." if len(text) > limit else "")
+
+
+def embedding_model() -> Any:
+    global EMBEDDING_MODEL
+    if SentenceTransformer is None:
+        raise ValueError("当前环境缺少 sentence-transformers。请执行：python3 -m pip install -r requirements.txt")
+    with EMBEDDING_MODEL_LOCK:
+        if EMBEDDING_MODEL is None:
+            try:
+                EMBEDDING_MODEL = SentenceTransformer(EMBEDDING_MODEL_NAME, local_files_only=True)
+            except Exception as exc:  # noqa: BLE001 - model download/load errors need UI-friendly text
+                raise ValueError(
+                    "地址 embedding 模型加载失败，增量新地址无法编码。"
+                    f"模型：{EMBEDDING_MODEL_NAME}；当前使用本地离线加载，未联网下载；"
+                    f"原始原因：{short_error(exc)}"
+                ) from exc
+        return EMBEDDING_MODEL
+
+
+def embed_addresses(addresses: list[str], job_id: str | None = None) -> Any:
+    require_clustering_dependencies()
+    if np is None:
+        raise ValueError("当前环境缺少 numpy。")
+    model = embedding_model()
+    vectors: list[list[float] | None] = []
+    missing_addresses: list[str] = []
+    missing_positions: list[int] = []
+    for index, address in enumerate(addresses):
+        cached = EMBEDDING_CACHE.get(address)
+        if cached is None:
+            vectors.append(None)
+            missing_addresses.append(address)
+            missing_positions.append(index)
+        else:
+            vectors.append(cached)
+    if missing_addresses:
+        update_cluster_job(job_id, progress=18, message=f"正在编码地址向量：0/{len(missing_addresses)}")
+        encoded = model.encode(missing_addresses, show_progress_bar=False)
+        for offset, vector in enumerate(encoded):
+            values = np.asarray(vector, dtype="float32").tolist()
+            EMBEDDING_CACHE[missing_addresses[offset]] = values
+            vectors[missing_positions[offset]] = values
+            if job_id and (offset + 1 == len(missing_addresses) or (offset + 1) % 200 == 0):
+                progress = 18 + int((offset + 1) / len(missing_addresses) * 42)
+                update_cluster_job(job_id, progress=progress, message=f"正在编码地址向量：{offset + 1}/{len(missing_addresses)}")
+    return np.asarray(vectors, dtype="float32")
+
+
+def rows_with_receiver_addr(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        aliased = apply_aliases(row)
+        clean_row = {key: json_safe_value(value) for key, value in row.items()}
+        receiver = clean_receiver_address(get_field(aliased, ADDRESS_COL))
+        clean_row["receiverAddr"] = receiver
+        result.append(clean_row)
+    return result
+
+
+def build_cluster_tables(rows: list[dict[str, Any]], labels: list[int]) -> dict[str, Any]:
+    detail_rows: list[dict[str, Any]] = []
+    summary: dict[str, dict[str, Any]] = {}
+    source_columns: list[str] = list(rows[0].keys()) if rows else []
+    columns = source_columns[:]
+    for column in ("receiverAddr", "addr_cluster_id"):
+        if column not in columns:
+            columns.append(column)
+    for row, label in zip(rows, labels):
+        detail = {key: json_safe_value(value) for key, value in row.items()}
+        receiver = clean_receiver_address(detail.get("receiverAddr") or detail.get("consigneeAddr") or get_field(apply_aliases(row), ADDRESS_COL))
+        cluster_id = int(label)
+        detail["receiverAddr"] = receiver
+        detail["addr_cluster_id"] = cluster_id
+        detail_rows.append(detail)
+        key = str(cluster_id)
+        if key not in summary:
+            summary[key] = {"addr_cluster_id": cluster_id, "sample_receiverAddr": receiver, "count": 0}
+        summary[key]["count"] += 1
+        if not summary[key]["sample_receiverAddr"] and receiver:
+            summary[key]["sample_receiverAddr"] = receiver
+    summary_rows = sorted(summary.values(), key=lambda item: (-item["count"], item["addr_cluster_id"]))
+    return {
+        "detail_table": {"columns": columns, "rows": detail_rows},
+        "summary_table": {"columns": ["addr_cluster_id", "sample_receiverAddr", "count"], "rows": summary_rows},
+    }
+
+
+def engineering_payload(rows: list[dict[str, Any]], labels: list[int], embeddings: Any, params: dict[str, Any]) -> dict[str, Any]:
+    vectors = embeddings.tolist() if hasattr(embeddings, "tolist") else embeddings
+    items = []
+    for row, label, vector in zip(rows, labels, vectors):
+        receiver = clean_receiver_address(row.get("receiverAddr") or row.get("consigneeAddr") or get_field(apply_aliases(row), ADDRESS_COL))
+        items.append(
+            {
+                "receiverAddr": receiver,
+                "addr_cluster_id": int(label),
+                "embedding": vector,
+            }
+        )
+    return {
+        "version": 1,
+        "model": EMBEDDING_MODEL_NAME,
+        "params": params,
+        "items": items,
+    }
 
 
 def get_field(row: dict[str, Any], canonical: str) -> Any:
@@ -315,6 +501,311 @@ def complex_query_rows(
         "matched_value_counts": matched_value_counts,
         "unmatched_values": unmatched_values,
     }
+
+
+def update_cluster_job(job_id: str | None, **updates: Any) -> None:
+    if not job_id:
+        return
+    with CLUSTER_JOBS_LOCK:
+        if job_id in CLUSTER_JOBS:
+            CLUSTER_JOBS[job_id].update(updates)
+
+
+def cluster_job(job_id: str) -> dict[str, Any]:
+    with CLUSTER_JOBS_LOCK:
+        if job_id not in CLUSTER_JOBS:
+            raise ValueError("聚类任务不存在。")
+        job = CLUSTER_JOBS[job_id]
+        return {
+            key: value
+            for key, value in job.items()
+            if key not in {"result"}
+        }
+
+
+def cluster_result(job_id: str) -> dict[str, Any]:
+    with CLUSTER_JOBS_LOCK:
+        if job_id not in CLUSTER_JOBS:
+            raise ValueError("聚类任务不存在。")
+        job = CLUSTER_JOBS[job_id]
+        if job.get("status") != "done":
+            raise ValueError("聚类任务尚未完成。")
+        return job.get("result") or {}
+
+
+def start_cluster_job(kind: str, target: Any, *args: Any) -> str:
+    job_id = uuid.uuid4().hex
+    with CLUSTER_JOBS_LOCK:
+        CLUSTER_JOBS[job_id] = {
+            "job_id": job_id,
+            "kind": kind,
+            "status": "pending",
+            "progress": 0,
+            "message": "等待开始",
+        }
+
+    def runner() -> None:
+        try:
+            update_cluster_job(job_id, status="running", progress=3, message="任务启动")
+            result = target(job_id, *args)
+            with CLUSTER_JOBS_LOCK:
+                CLUSTER_JOBS[job_id].update(
+                    {
+                        "status": "done",
+                        "progress": 100,
+                        "message": "聚类完成",
+                        "result": result,
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001 - surface task errors to UI
+            detail = traceback.format_exc(limit=6)
+            message = short_text(str(exc), 900)
+            update_cluster_job(
+                job_id,
+                status="error",
+                progress=100,
+                message=message,
+                error=message,
+                error_detail=short_text(detail, 1600),
+            )
+
+    threading.Thread(target=runner, daemon=True).start()
+    return job_id
+
+
+def run_full_cluster_job(job_id: str, rows: list[dict[str, Any]], params: dict[str, Any]) -> dict[str, Any]:
+    require_clustering_dependencies()
+    if np is None or DBSCAN is None:
+        raise ValueError("当前环境缺少聚类依赖。")
+    eps = float(params.get("eps", 0.68))
+    min_samples = int(params.get("min_samples", 1))
+    metric = normalize_value(params.get("metric") or "euclidean")
+    normalize_embeddings = bool(params.get("normalize", True))
+    prepared_rows = rows_with_receiver_addr(rows)
+    addresses = [row.get("receiverAddr") or "" for row in prepared_rows]
+    if not addresses:
+        raise ValueError("没有可聚类的地址数据。")
+    update_cluster_job(job_id, progress=8, message=f"已读取 {len(addresses)} 条地址，准备编码")
+    embeddings = embed_addresses(addresses, job_id)
+    vectors = sklearn_normalize(embeddings) if normalize_embeddings and sklearn_normalize else embeddings
+    update_cluster_job(job_id, progress=66, message="正在运行 DBSCAN")
+    dbscan = DBSCAN(eps=eps, min_samples=min_samples, metric=metric)
+    labels = [int(value) for value in dbscan.fit_predict(vectors)]
+    update_cluster_job(job_id, progress=84, message="正在生成结果表")
+    run_params = {
+        "mode": "full",
+        "model": EMBEDDING_MODEL_NAME,
+        "eps": eps,
+        "min_samples": min_samples,
+        "metric": metric,
+        "normalize": normalize_embeddings,
+    }
+    tables = build_cluster_tables(prepared_rows, labels)
+    payload = engineering_payload(prepared_rows, labels, embeddings, run_params)
+    tables.update(
+        {
+            "params": run_params,
+            "stats": {
+                "row_count": len(prepared_rows),
+                "cluster_count": len({label for label in labels if label >= 0}),
+                "noise_count": sum(1 for label in labels if label < 0),
+            },
+            "engineering_file": payload,
+        }
+    )
+    return tables
+
+
+def parse_engineering_file(payload: dict[str, Any]) -> tuple[list[str], list[int], Any]:
+    if np is None:
+        raise ValueError("当前环境缺少 numpy。")
+    if not isinstance(payload, dict):
+        raise ValueError(f"工程文件格式不正确：根对象应为 JSON object，实际为 {type(payload).__name__}。")
+    items = payload.get("items") or []
+    if not isinstance(items, list):
+        raise ValueError("工程文件格式不正确：items 应为数组。请上传“导出工程文件”生成的 JSON，而不是明细表 CSV/Excel。")
+    addresses: list[str] = []
+    labels: list[int] = []
+    vectors: list[Any] = []
+    skipped_missing_address = 0
+    skipped_missing_embedding = 0
+    skipped_bad_embedding = 0
+    sample_keys: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            skipped_bad_embedding += 1
+            continue
+        if not sample_keys:
+            sample_keys = list(item.keys())
+        address = clean_receiver_address(item.get("receiverAddr"))
+        vector = item.get("embedding")
+        if not address:
+            skipped_missing_address += 1
+            continue
+        if vector is None:
+            skipped_missing_embedding += 1
+            continue
+        try:
+            vector_values = np.asarray(vector, dtype="float32").tolist()
+        except Exception:
+            skipped_bad_embedding += 1
+            continue
+        addresses.append(address)
+        labels.append(int(item.get("addr_cluster_id", -1)))
+        EMBEDDING_CACHE.setdefault(address, vector_values)
+        vectors.append(vector_values)
+    if not addresses or not vectors:
+        top_keys = list(payload.keys())[:12]
+        raise ValueError(
+            "工程文件缺少可用的 receiverAddr / addr_cluster_id / embedding。"
+            f"已读取根字段：{top_keys or '无'}；items 数量：{len(items)}；"
+            f"首个 item 字段：{sample_keys or '无'}；"
+            f"缺地址：{skipped_missing_address}；缺 embedding：{skipped_missing_embedding}；embedding 无法解析：{skipped_bad_embedding}。"
+            "请确认上传的是聚类汇总区“导出工程文件”生成的 JSON，不是明细表或汇总表。"
+        )
+    return addresses, labels, np.asarray(vectors, dtype="float32")
+
+
+def run_faiss_incremental_assignment(
+    job_id: str,
+    base_vectors: Any,
+    base_labels: list[int],
+    new_vectors: Any,
+    threshold: float,
+    index_type: str,
+    params: dict[str, Any],
+) -> tuple[list[int], list[float]]:
+    if np is None:
+        raise ValueError("当前环境缺少 numpy。")
+    worker_path = ROOT / "faiss_incremental_worker.py"
+    if not worker_path.exists():
+        raise ValueError("缺少 FAISS 增量 worker 文件：faiss_incremental_worker.py")
+    with tempfile.TemporaryDirectory(prefix="anti_fraud_faiss_") as temp_dir:
+        temp_path = Path(temp_dir)
+        input_path = temp_path / "input.npz"
+        output_path = temp_path / "output.json"
+        np.savez_compressed(
+            input_path,
+            base_vectors=np.asarray(base_vectors, dtype="float32"),
+            base_labels=np.asarray(base_labels, dtype="int64"),
+            new_vectors=np.asarray(new_vectors, dtype="float32"),
+            threshold=np.asarray([threshold], dtype="float32"),
+            index_type=np.asarray([index_type]),
+            params=np.asarray([json.dumps(params, ensure_ascii=False)]),
+        )
+        process = subprocess.Popen(
+            [sys.executable, str(worker_path), str(input_path), str(output_path)],
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        stderr_lines: list[str] = []
+        if process.stdout is not None:
+            for line in process.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                message_type = message.get("type")
+                if message_type == "progress":
+                    done = int(message.get("done") or 0)
+                    total = max(1, int(message.get("total") or 1))
+                    progress = 64 + int(done / total * 24)
+                    update_cluster_job(job_id, progress=progress, message=f"正在顺序归类：{done}/{total}")
+                elif message_type == "error":
+                    stderr_lines.append(str(message.get("error") or ""))
+                    if message.get("traceback"):
+                        stderr_lines.append(str(message.get("traceback")))
+        stderr = ""
+        if process.stderr is not None:
+            stderr = process.stderr.read()
+        exitcode = process.wait()
+        if stderr:
+            stderr_lines.append(stderr)
+        if exitcode != 0:
+            detail = short_text(" ".join(part for part in stderr_lines if part), 1200)
+            raise ValueError(
+                f"FAISS {index_type} 独立进程执行失败，exitcode={exitcode}。"
+                f"{'原因：' + detail if detail else '没有返回详细错误。'}"
+            )
+        if not output_path.exists():
+            raise ValueError(f"FAISS {index_type} 独立进程没有生成结果文件。")
+        result = json.loads(output_path.read_text(encoding="utf-8"))
+    return list(result.get("assigned") or []), list(result.get("distances") or [])
+
+
+def run_incremental_cluster_job(
+    job_id: str,
+    base_payload: dict[str, Any],
+    incremental_rows: list[dict[str, Any]],
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    require_clustering_dependencies(incremental=True)
+    if np is None:
+        raise ValueError("当前环境缺少 numpy。")
+    threshold = float(params.get("threshold", 0.68))
+    index_type = normalize_value(params.get("index_type") or "FlatL2")
+    normalize_embeddings = bool(params.get("normalize", True))
+    base_addresses, base_labels, base_embeddings = parse_engineering_file(base_payload)
+    prepared_rows = rows_with_receiver_addr(incremental_rows)
+    addresses = [row.get("receiverAddr") or "" for row in prepared_rows]
+    if not addresses:
+        raise ValueError("没有可增量聚类的地址数据。")
+    update_cluster_job(job_id, progress=8, message="正在编码增量地址")
+    new_embeddings = embed_addresses(addresses, job_id)
+    update_cluster_job(job_id, progress=60, message="增量地址编码完成，正在准备向量")
+    base_vectors = sklearn_normalize(base_embeddings) if normalize_embeddings and sklearn_normalize else base_embeddings
+    new_vectors = sklearn_normalize(new_embeddings) if normalize_embeddings and sklearn_normalize else new_embeddings
+    update_cluster_job(job_id, progress=62, message=f"正在使用 FAISS {index_type} 索引执行增量归类")
+    assigned, distances = run_faiss_incremental_assignment(
+        job_id,
+        base_vectors.astype("float32"),
+        base_labels,
+        new_vectors.astype("float32"),
+        threshold,
+        index_type,
+        params,
+    )
+    update_cluster_job(job_id, progress=90, message="正在生成增量结果表")
+    run_params = {
+        "mode": "incremental",
+        "model": EMBEDDING_MODEL_NAME,
+        "index_type": index_type,
+        "threshold": threshold,
+        "normalize": normalize_embeddings,
+        "hnsw_m": int(params.get("hnsw_m", 32)),
+        "hnsw_ef_search": int(params.get("hnsw_ef_search", 64)),
+        "ivf_nlist": int(params.get("ivf_nlist", 64)),
+        "ivf_nprobe": int(params.get("ivf_nprobe", 8)),
+    }
+    tables = build_cluster_tables(prepared_rows, assigned)
+    combined_addresses = base_addresses + addresses
+    combined_labels = base_labels + assigned
+    combined_embeddings = np.vstack([base_embeddings, new_embeddings]).astype("float32")
+    combined_rows = [{"receiverAddr": address} for address in combined_addresses]
+    payload = engineering_payload(combined_rows, combined_labels, combined_embeddings, run_params)
+    detail_rows = tables["detail_table"]["rows"]
+    for row, distance in zip(detail_rows, distances):
+        row["nearest_distance"] = distance
+    if "nearest_distance" not in tables["detail_table"]["columns"]:
+        tables["detail_table"]["columns"].append("nearest_distance")
+    tables.update(
+        {
+            "params": run_params,
+            "stats": {
+                "row_count": len(prepared_rows),
+                "cluster_count": len(set(assigned)),
+                "new_cluster_count": sum(1 for label in set(assigned) if label >= max(base_labels, default=-1) + 1),
+            },
+            "engineering_file": payload,
+        }
+    )
+    return tables
 
 
 def as_boolish(value: Any) -> bool:
@@ -1830,6 +2321,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.handle_search(payload)
             elif self.path == "/api/complex-query":
                 self.handle_complex_query(payload)
+            elif self.path == "/api/cluster/full":
+                self.handle_cluster_full(payload)
+            elif self.path == "/api/cluster/incremental":
+                self.handle_cluster_incremental(payload)
+            elif self.path == "/api/cluster/status":
+                self.handle_cluster_status(payload)
+            elif self.path == "/api/cluster/result":
+                self.handle_cluster_result(payload)
             else:
                 json_response(self, 404, {"error": "接口不存在"})
         except Exception as exc:  # noqa: BLE001 - convert to JSON for the UI
@@ -1894,6 +2393,31 @@ class Handler(BaseHTTPRequestHandler):
             payload.get("query_values") or {},
         )
         json_response(self, 200, result)
+
+    def handle_cluster_full(self, payload: dict[str, Any]) -> None:
+        filename = payload.get("filename") or ""
+        rows = parse_uploaded_file(filename, payload.get("content_base64") or "")
+        params = payload.get("params") or {}
+        job_id = start_cluster_job("full", run_full_cluster_job, rows, params)
+        json_response(self, 200, {"job_id": job_id})
+
+    def handle_cluster_incremental(self, payload: dict[str, Any]) -> None:
+        incremental_filename = payload.get("incremental_filename") or ""
+        incremental_rows = parse_uploaded_file(incremental_filename, payload.get("incremental_content_base64") or "")
+        base_content = base64.b64decode(payload.get("base_content_base64") or "")
+        try:
+            base_payload = json.loads(base_content.decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001 - invalid uploaded JSON
+            raise ValueError(f"工程文件解析失败：{exc}") from exc
+        params = payload.get("params") or {}
+        job_id = start_cluster_job("incremental", run_incremental_cluster_job, base_payload, incremental_rows, params)
+        json_response(self, 200, {"job_id": job_id})
+
+    def handle_cluster_status(self, payload: dict[str, Any]) -> None:
+        json_response(self, 200, cluster_job(payload.get("job_id") or ""))
+
+    def handle_cluster_result(self, payload: dict[str, Any]) -> None:
+        json_response(self, 200, cluster_result(payload.get("job_id") or ""))
 
 
 def main() -> None:
