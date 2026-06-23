@@ -65,6 +65,21 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     faiss = None
 
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover - handled at runtime
+    pd = None
+
+try:
+    import cpca
+except ImportError:  # pragma: no cover - handled at runtime
+    cpca = None
+
+try:
+    import cn2an
+except ImportError:  # pragma: no cover - handled at runtime
+    cn2an = None
+
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -227,7 +242,75 @@ def clean_receiver_address(value: Any) -> str:
     text = text.replace("：", ":").replace(":", "")
     text = text.replace("(", "").replace(")", "")
     text = re.sub(r"(地址|电话|姓名)", "", text)
+
+    if cpca is None or pd is None:
+        return text
+
+    try:
+        parsed = cpca.transform([text])
+        row = parsed.iloc[0]
+        province = row["省"]
+        city = row["市"]
+        district = row["区"]
+        detail = row["地址"]
+        admin_words = get_admin_words(province, city, district, None)
+        detail = remove_admin_repeat(detail, admin_words)
+        detail = normalize_address_number(detail)
+        return "".join(
+            [
+                "" if pd.isna(province) else str(province),
+                "" if pd.isna(city) else str(city),
+                "" if pd.isna(district) else str(district),
+                detail,
+            ]
+        )
+    except Exception:
+        return text
+
+
+def get_admin_words(province: Any, city: Any, district: Any, town: Any) -> list[str]:
+    if pd is None:
+        return []
+    words: list[str] = []
+    for value in (province, city, district, town):
+        if pd.isna(value):
+            continue
+        text = str(value)
+        words.append(text)
+        short = (
+            text.replace("省", "")
+            .replace("市", "")
+            .replace("区", "")
+            .replace("县", "")
+            .replace("自治州", "")
+            .replace("街道", "")
+            .replace("镇", "")
+        )
+        words.append(short)
+    return sorted(set(words), key=len, reverse=True)
+
+
+def remove_admin_repeat(detail: Any, admin_words: list[str]) -> str:
+    text = "" if detail is None else str(detail)
+    changed = True
+    while changed:
+        changed = False
+        for word in admin_words:
+            if word and text.startswith(word):
+                text = text[len(word) :]
+                changed = True
+                break
     return text
+
+
+def normalize_address_number(text: Any) -> str:
+    value = "" if text is None else str(text)
+    if cn2an is None:
+        return value
+    try:
+        return cn2an.transform(value, "cn2an")
+    except Exception:
+        return value
 
 
 def require_clustering_dependencies(incremental: bool = False) -> None:
@@ -240,6 +323,12 @@ def require_clustering_dependencies(incremental: bool = False) -> None:
         missing.append("scikit-learn")
     if sklearn_normalize is None:
         missing.append("scikit-learn")
+    if pd is None:
+        missing.append("pandas")
+    if cpca is None:
+        missing.append("cpca")
+    if cn2an is None:
+        missing.append("cn2an")
     if incremental and faiss is None:
         missing.append("faiss-cpu")
     if missing:

@@ -8,3 +8,6 @@ scipy==1.13.1
 scikit-learn==1.6.1
 sentence-transformers==5.1.2
 faiss-cpu==1.12.0
+pandas==2.2.3
+cpca==0.5.5
+cn2an==0.5.23

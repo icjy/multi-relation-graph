@@ -332,7 +332,14 @@ POST /api/cluster/result        获取聚类任务结果
 全量聚类：
 
 - 输入文件使用 `consigneeAddr` / `receiverAddr` 作为地址来源。
-- 地址清洗逻辑参考 `dbscan.txt`：小写、去空白、去 `-`、统一括号和冒号、去掉“地址/电话/姓名”等前缀。
+- 地址清洗逻辑：
+  - 空值保持为空；非空地址先转小写、去 `-`、去空白和全角空格。
+  - 统一并删除括号、冒号等符号，去掉“地址 / 电话 / 姓名”等无意义前缀。
+  - 使用 `cpca` 解析省、市、区和详细地址。
+  - 根据解析出的省 / 市 / 区生成行政区全称与简称词表，删除详细地址开头重复出现的行政区信息。
+  - 使用 `cn2an` 将详细地址中的中文数字转换为阿拉伯数字。
+  - 最终重新拼接为 `省 + 市 + 区 + 清洗后的详细地址`，作为 `receiverAddr`。
+  - 如果 `cpca` 解析失败，则回退为基础清洗后的地址。
 - embedding 模型当前固定为 `paraphrase-multilingual-MiniLM-L12-v2`，页面保留模型选择入口，后续可扩展其他模型。
 - 聚类算法使用 `DBSCAN`，页面可调 `eps`、`min_samples`、`metric`、是否归一化。
 - 输出明细表 = 原始列 + `receiverAddr` + `addr_cluster_id`；输出汇总表 = `addr_cluster_id`、样例地址、数量。
@@ -1084,7 +1091,7 @@ http://127.0.0.1:8000
 PORT=8080 python3 server.py
 ```
 
-服务端依赖 `openpyxl`、`igraph`、`leidenalg`、`numpy`、`scikit-learn`、`sentence-transformers` 和 `faiss-cpu`。如果本机没有安装：
+服务端依赖 `openpyxl`、`igraph`、`leidenalg`、`numpy`、`scikit-learn`、`sentence-transformers`、`faiss-cpu`、`pandas`、`cpca` 和 `cn2an`。如果本机没有安装：
 
 ```bash
 python3 -m pip install -r requirements.txt
