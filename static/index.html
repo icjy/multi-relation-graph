@@ -157,8 +157,13 @@
                 社区id(Agent)
                 <input id="featureCommunityFilter" type="search" placeholder="输入社区id自动筛选" autocomplete="off" />
               </label>
-              <button id="exportCsvButton" class="secondary" type="button">导出 CSV</button>
-              <button id="exportExcelButton" class="secondary" type="button">导出 Excel</button>
+              <button id="toggleFeatureColumnNames" class="field-name-toggle is-on" type="button" aria-pressed="true">
+                <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+                <span class="toggle-text">字段名：中文</span>
+              </button>
+              <button id="downloadFeatureMapping" class="secondary feature-action-button" type="button">字段映射 JSON</button>
+              <button id="exportCsvButton" class="secondary feature-action-button" type="button">导出 CSV</button>
+              <button id="exportExcelButton" class="secondary feature-action-button" type="button">导出 Excel</button>
             </div>
           </div>
           <div id="featureTable" class="feature-table empty">暂无数据</div>

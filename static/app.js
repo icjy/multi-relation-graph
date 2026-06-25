@@ -9,6 +9,8 @@ const state = {
   lastFile: null,
   lastFileName: "",
   currentGraph: null,
+  featureColumnMode: "zh",
+  featureColumnMapping: {},
   featureTable: { columns: [], rows: [], page: 1, pageSize: 50, communityFilter: "" },
   complexQuery: { columns: [], rows: [], summary: {}, input_counts: {}, matched_value_counts: {}, unmatched_values: {}, page: 1, pageSize: 20 },
   cluster: {
@@ -46,6 +48,8 @@ const borrowerMode = document.querySelector("#borrowerMode");
 const agentMode = document.querySelector("#agentMode");
 const centerInput = document.querySelector("#centerInput");
 const queryButton = document.querySelector("#queryButton");
+const toggleFeatureColumnNames = document.querySelector("#toggleFeatureColumnNames");
+const downloadFeatureMapping = document.querySelector("#downloadFeatureMapping");
 const exportCsvButton = document.querySelector("#exportCsvButton");
 const exportExcelButton = document.querySelector("#exportExcelButton");
 const featureCommunityFilter = document.querySelector("#featureCommunityFilter");
@@ -96,6 +100,9 @@ let progressHideTimer = 0;
 let progressPulseTimer = 0;
 let currentProgress = 0;
 let clusterPollTimer = 0;
+
+loadFeatureColumnMapping();
+updateFeatureColumnModeButton();
 
 navButtons.forEach((button) => {
   button.addEventListener("click", () => switchView(button.dataset.view));
@@ -149,6 +156,12 @@ centerInput.addEventListener("keydown", (event) => {
 });
 
 centerInput.addEventListener("input", debounce(searchCenters, 240));
+toggleFeatureColumnNames?.addEventListener("click", () => {
+  state.featureColumnMode = state.featureColumnMode === "en" ? "zh" : "en";
+  updateFeatureColumnModeButton();
+  renderFeatureTable(state.featureTable);
+});
+downloadFeatureMapping?.addEventListener("click", downloadFeatureColumnMapping);
 exportCsvButton?.addEventListener("click", () => exportFeatureTable("csv"));
 exportExcelButton?.addEventListener("click", () => exportFeatureTable("xls"));
 featureCommunityFilter?.addEventListener("input", debounce(() => {
@@ -463,6 +476,22 @@ function renderSummary(summary) {
     [summary.community_size_label || "最大团伙规模", formatNumber(summary.max_community_size ?? summary.max_community_agents)],
     ["整体逾期率", formatPercent(summary.overdue_rate)],
   ];
+  items.push(["用户图节点数", formatNumber(summary.user_graph_nodes)]);
+  items.push(["用户图边数", formatNumber(summary.user_graph_edges)]);
+  if ((summary.community_method || state.communityMethod) === "louvain") {
+    items.push(["用户图 Louvain Q", formatDecimal(summary.user_louvain_q, 2)]);
+  }
+  if ((summary.community_method || state.communityMethod) === "leiden") {
+    items.push(["用户图 Leiden 质量函数值", formatDecimal(summary.user_leiden_quality, 2)]);
+  }
+  items.push(["中介图节点数", formatNumber(summary.agent_graph_nodes)]);
+  items.push(["中介图边数", formatNumber(summary.agent_graph_edges)]);
+  if ((summary.community_method || state.communityMethod) === "louvain") {
+    items.push(["中介图 Louvain Q", formatDecimal(summary.agent_louvain_q, 2)]);
+  }
+  if ((summary.community_method || state.communityMethod) === "leiden") {
+    items.push(["中介图 Leiden 质量函数值", formatDecimal(summary.agent_leiden_quality, 2)]);
+  }
   if (summary.skipped_rows) items.push(["跳过行数", formatNumber(summary.skipped_rows), "warning"]);
   if (summary.missing_columns?.length) items.push(["缺失字段", summary.missing_columns.length, "warning"]);
   document.querySelector("#summaryCards").innerHTML = items.map(([label, value, tone]) => `
@@ -507,6 +536,7 @@ function renderFeatureTable(featureTable) {
   const subtitle = document.querySelector("#featureSubtitle");
   if (!container || !pagination) return;
   const columns = featureTable?.columns || [];
+  const displayColumns = featureDisplayColumns(columns);
   const rows = filteredFeatureRows(featureTable);
   const rawRows = featureTable?.rows || [];
   const pageSize = Number(featureTable.pageSize || 50);
@@ -534,7 +564,7 @@ function renderFeatureTable(featureTable) {
   const pageRows = rows.slice(start, start + pageSize);
   container.innerHTML = `
     <table>
-      <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+      <thead><tr>${displayColumns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
       <tbody>
         ${pageRows.map((row) => `
           <tr>${columns.map((column) => `<td>${formatCell(row[column])}</td>`).join("")}</tr>
@@ -571,6 +601,47 @@ function filteredFeatureRows(featureTable) {
       || columns.find((column) => String(column).startsWith("社区id"));
   if (!communityColumn) return [];
   return rows.filter((row) => String(row[communityColumn] ?? "") === filterText);
+}
+
+async function loadFeatureColumnMapping() {
+  try {
+    const response = await fetch("feature_column_mapping.json", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    state.featureColumnMapping = await response.json();
+  } catch (error) {
+    console.warn("字段映射文件加载失败，将保留中文字段名。", error);
+    state.featureColumnMapping = {};
+  } finally {
+    renderFeatureTable(state.featureTable);
+  }
+}
+
+function featureDisplayColumns(columns) {
+  return columns.map((column) => featureDisplayColumn(column));
+}
+
+function featureDisplayColumn(column) {
+  if (state.featureColumnMode !== "en") return column;
+  return state.featureColumnMapping[column] || column;
+}
+
+function updateFeatureColumnModeButton() {
+  if (!toggleFeatureColumnNames) return;
+  const isChinese = state.featureColumnMode === "zh";
+  const text = toggleFeatureColumnNames.querySelector(".toggle-text");
+  if (text) text.textContent = isChinese ? "字段名：中文" : "字段名：英文";
+  else toggleFeatureColumnNames.textContent = isChinese ? "字段名：中文" : "字段名：英文";
+  toggleFeatureColumnNames.setAttribute("aria-pressed", String(isChinese));
+  toggleFeatureColumnNames.classList.toggle("is-on", isChinese);
+}
+
+function downloadFeatureColumnMapping() {
+  const mapping = state.featureColumnMapping || {};
+  if (!Object.keys(mapping).length) {
+    showToast("字段映射文件尚未加载");
+    return;
+  }
+  downloadBlob("feature_column_mapping.json", JSON.stringify(mapping, null, 2), "application/json;charset=utf-8");
 }
 
 async function runComplexQuery() {
@@ -1438,6 +1509,12 @@ function formatPercent(value) {
   return `${(number * 100).toFixed(2)}%`;
 }
 
+function formatDecimal(value, digits = 6) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return number.toLocaleString("zh-CN", { maximumFractionDigits: digits });
+}
+
 function formatCell(value) {
   if (typeof value === "number") {
     return Number.isInteger(value) ? value : Number(value.toFixed(8));
@@ -1467,13 +1544,14 @@ function exportFeatureTable(format) {
     showToast("暂无可导出的特征表");
     return;
   }
+  const exportColumns = featureDisplayColumns(columns);
   if (format === "xls") {
     const html = `
       <html>
         <head><meta charset="utf-8" /></head>
         <body>
           <table>
-            <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+            <thead><tr>${exportColumns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
             <tbody>
               ${rows.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>`).join("")}
             </tbody>
@@ -1485,7 +1563,7 @@ function exportFeatureTable(format) {
     return;
   }
   const csv = "\ufeff" + [
-    columns.map(csvEscape).join(","),
+    exportColumns.map(csvEscape).join(","),
     ...rows.map((row) => columns.map((column) => csvEscape(row[column])).join(",")),
   ].join("\n");
   downloadBlob(`anti_fraud_features_${timestamp()}.csv`, csv, "text/csv;charset=utf-8");

@@ -1388,6 +1388,32 @@ class RiskGraph:
         )
         return self.partition_from_membership(nodes, partition.membership, "LD")
 
+    def graph_quality_metrics(self, community_method: str, resolution: float = 1.0) -> dict[str, Any]:
+        user_adjacency = self.user_projection()
+        agent_adjacency = self.agent_multi_projection()
+        metrics: dict[str, Any] = {}
+
+        for prefix, adjacency in (("user", user_adjacency), ("agent", agent_adjacency)):
+            graph, _ = self.igraph_from_adjacency(adjacency)
+            metrics[f"{prefix}_graph_nodes"] = graph.vcount()
+            metrics[f"{prefix}_graph_edges"] = graph.ecount()
+            if not graph.vcount() or not graph.ecount():
+                continue
+            if community_method == "louvain":
+                partition = graph.community_multilevel(weights="weight", resolution=resolution)
+                metrics[f"{prefix}_louvain_q"] = graph.modularity(partition.membership, weights="weight")
+            elif community_method == "leiden":
+                if leidenalg is None:
+                    raise ValueError("当前环境缺少 leidenalg。请先执行：python3 -m pip install -r requirements.txt")
+                partition = leidenalg.find_partition(
+                    graph,
+                    leidenalg.RBConfigurationVertexPartition,
+                    weights="weight",
+                    resolution_parameter=resolution,
+                )
+                metrics[f"{prefix}_leiden_quality"] = partition.quality()
+        return metrics
+
     def split_disconnected_partition(
         self,
         partition: dict[str, str],
@@ -2249,6 +2275,7 @@ class RiskGraph:
             "overdue_rate": overdue_total / len(funded) if funded else 0,
             "missing_columns": missing,
             "columns": self.columns,
+            **self.graph_quality_metrics(community_method),
         }
 
     def search(self, query: str, limit: int = 10) -> dict[str, list[dict[str, str]]]:

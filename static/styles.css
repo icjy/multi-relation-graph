@@ -576,6 +576,67 @@ textarea {
 .feature-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.feature-action-button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.field-name-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.field-name-toggle .toggle-track {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  background: #d8dee8;
+  transition: background 0.18s ease;
+  flex: 0 0 auto;
+}
+
+.field-name-toggle .toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+  transition: transform 0.18s ease;
+}
+
+.field-name-toggle.is-on {
+  border-color: #6b7cff;
+  color: #25307a;
+}
+
+.field-name-toggle.is-on .toggle-track {
+  background: #6b7cff;
+}
+
+.field-name-toggle.is-on .toggle-thumb {
+  transform: translateX(14px);
 }
 
 .secondary {

@@ -701,6 +701,48 @@ P = 当前行 ip
 - 页面上的首复贷、是否退货、逾期口径筛选会影响所有加工结果
 - 概览中的 `上传原始行数` 是文件解析出的总行数，`参与分析行数` 是应用首复贷/退货筛选后的行数
 
+### 概览指标
+
+`关系数` 表示原始 Agent-User 二部图中的去重关联边数，计算口径为：
+
+```text
+关系数 = Σ |Borrowers(agent)|
+```
+
+其中 `Borrowers(agent)` 是某个中介关联过的去重借款人集合。比如中介 A1 关联 U1、U2，中介 A2 关联 U2、U3，则关系数为 `2 + 2 = 4`，因为 `A1-U2` 和 `A2-U2` 是两条不同的 Agent-User 关系。
+
+概览中的 `用户图节点数`、`用户图边数` 来自 User-User 同构图。两个用户只要共享中介、设备、IP 或地址簇中的任意一种，就会连一条边，多种共享关系会累加为边权。
+
+概览中的 `中介图节点数`、`中介图边数` 来自 Agent-Agent 多关系图。两个中介只要共享借款人、设备、IP 或地址簇中的任意一种，就会连一条边，边权为：
+
+```text
+weight = shared_user + shared_device * 1.2 + shared_ip * 0.8 + shared_address
+```
+
+当社区算法选择 `Louvain` 时，概览展示 `用户图 Louvain Q` 和 `中介图 Louvain Q`。当前实现使用 `igraph.community_multilevel(weights="weight", resolution=1.0)`，优化的是加权 modularity：
+
+```text
+Q = (1 / 2m) * Σ_ij [A_ij - γ * k_i * k_j / (2m)] * I(c_i = c_j)
+```
+
+其中：
+
+```text
+γ = 1.0
+A_ij = 节点 i 和节点 j 的边权
+k_i = 节点 i 的加权度
+2m = 图中所有节点加权度之和
+I(c_i = c_j) = 如果 i 和 j 在同一社区则为 1，否则为 0
+```
+
+当社区算法选择 `Leiden` 时，概览展示 `用户图 Leiden 质量函数值` 和 `中介图 Leiden 质量函数值`。当前实现使用 `leidenalg.RBConfigurationVertexPartition`，目标函数为：
+
+```text
+Q_RB = Σ_ij [A_ij - γ * k_i * k_j / (2m)] * I(c_i = c_j)
+```
+
+其中 `γ = 1.0`。这个 `Leiden 质量函数值` 是 RBConfiguration 的原始目标函数值，不是标准化到 `0~1` 的 modularity，因此只能在同一张图、同一套边权和同一个 `resolution` 下比较大小。跨文件或跨图比较社区结构强弱时，更适合看 Louvain Q 或用同一口径重新计算的 modularity-like 值。
+
 ### 收货人手机号 / 中介维度
 
 ```text
