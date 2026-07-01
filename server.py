@@ -138,6 +138,7 @@ RELOAN_COL = "reloan_flag"
 RETURN_COL = "return_flag"
 FINAL_RESULT_COL = "final_result"
 FUNDED_RESULT = "30"
+QUERY_GRAPH_MAX_NODES = 80
 
 FIELD_ALIASES = {
     AGENT_COL: (AGENT_COL, "consigneeMobileId"),
@@ -547,7 +548,8 @@ def complex_query_rows(
                 matched = True
         return matched
 
-    matched_rows = [row for row in rows if filter_match(row) and query_match(row)]
+    filtered_rows = [row for row in rows if filter_match(row)]
+    matched_rows = [row for row in filtered_rows if query_match(row)]
     aliased_rows = [apply_aliases(row) for row in matched_rows]
 
     def distinct_count(canonical: str) -> int:
@@ -589,6 +591,169 @@ def complex_query_rows(
         "input_counts": input_counts,
         "matched_value_counts": matched_value_counts,
         "unmatched_values": unmatched_values,
+        "relation_graph": build_query_relation_graph(filtered_rows, parsed_values),
+    }
+
+
+def build_query_relation_graph(rows: list[dict[str, Any]], parsed_values: dict[str, set[str]]) -> dict[str, Any]:
+    if parsed_values.get("consigneeMobileId"):
+        return build_agent_query_graph(rows, parsed_values["consigneeMobileId"])
+    if parsed_values.get("app_user_id"):
+        return build_borrower_query_graph(rows, parsed_values["app_user_id"])
+    return {"type": "", "nodes": [], "edges": [], "summary": {"node_count": 0, "edge_count": 0, "isolated_count": 0}}
+
+
+def build_agent_query_graph(rows: list[dict[str, Any]], input_agents: set[str]) -> dict[str, Any]:
+    grouped: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for raw_row in rows:
+        row = apply_aliases(raw_row)
+        agent_id = normalize_phone(get_field(row, AGENT_COL))
+        if agent_id not in input_agents:
+            continue
+        borrower_id = normalize_phone(get_field(row, BORROWER_COL))
+        device_id = normalize_value(get_field(row, DEVICE_COL))
+        ip = normalize_value(get_field(row, IP_COL))
+        addr = normalize_value(get_field(row, ADDR_CLUSTER_COL))
+        if borrower_id:
+            grouped[agent_id]["users"].add(borrower_id)
+        if device_id:
+            grouped[agent_id]["devices"].add(device_id)
+        if ip:
+            grouped[agent_id]["ips"].add(ip)
+        if addr:
+            grouped[agent_id]["addrs"].add(addr)
+
+    nodes = sorted(grouped)
+    if len(nodes) > QUERY_GRAPH_MAX_NODES:
+        return query_graph_too_large("agent", len(nodes))
+    edges: list[dict[str, Any]] = []
+    for left, right in combinations(nodes, 2):
+        shared_users = grouped[left]["users"] & grouped[right]["users"]
+        shared_devices = grouped[left]["devices"] & grouped[right]["devices"]
+        shared_ips = grouped[left]["ips"] & grouped[right]["ips"]
+        shared_addrs = grouped[left]["addrs"] & grouped[right]["addrs"]
+        if not (shared_users or shared_devices or shared_ips or shared_addrs):
+            continue
+        edges.append(
+            {
+                "source": left,
+                "target": right,
+                "shared_user_count": len(shared_users),
+                "shared_device_count": len(shared_devices),
+                "shared_ip_count": len(shared_ips),
+                "shared_addr_count": len(shared_addrs),
+                "shared_users": sorted(shared_users),
+                "shared_devices": sorted(shared_devices),
+                "shared_ips": sorted(shared_ips),
+                "shared_addrs": sorted(shared_addrs),
+            }
+        )
+    return query_graph_payload("agent", nodes, edges)
+
+
+def build_borrower_query_graph(rows: list[dict[str, Any]], input_borrowers: set[str]) -> dict[str, Any]:
+    grouped: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for raw_row in rows:
+        row = apply_aliases(raw_row)
+        borrower_id = normalize_phone(get_field(row, BORROWER_COL))
+        if borrower_id not in input_borrowers:
+            continue
+        agent_id = normalize_phone(get_field(row, AGENT_COL))
+        device_id = normalize_value(get_field(row, DEVICE_COL))
+        ip = normalize_value(get_field(row, IP_COL))
+        addr = normalize_value(get_field(row, ADDR_CLUSTER_COL))
+        if agent_id:
+            grouped[borrower_id]["agents"].add(agent_id)
+        if device_id:
+            grouped[borrower_id]["devices"].add(device_id)
+        if ip:
+            grouped[borrower_id]["ips"].add(ip)
+        if addr:
+            grouped[borrower_id]["addrs"].add(addr)
+
+    nodes = sorted(grouped)
+    if len(nodes) > QUERY_GRAPH_MAX_NODES:
+        return query_graph_too_large("borrower", len(nodes))
+    edges: list[dict[str, Any]] = []
+    for left, right in combinations(nodes, 2):
+        shared_agents = grouped[left]["agents"] & grouped[right]["agents"]
+        shared_devices = grouped[left]["devices"] & grouped[right]["devices"]
+        shared_ips = grouped[left]["ips"] & grouped[right]["ips"]
+        shared_addrs = grouped[left]["addrs"] & grouped[right]["addrs"]
+        if not (shared_agents or shared_devices or shared_ips or shared_addrs):
+            continue
+        edges.append(
+            {
+                "source": left,
+                "target": right,
+                "shared_agent_count": len(shared_agents),
+                "shared_device_count": len(shared_devices),
+                "shared_ip_count": len(shared_ips),
+                "shared_addr_count": len(shared_addrs),
+                "shared_agents": sorted(shared_agents),
+                "shared_devices": sorted(shared_devices),
+                "shared_ips": sorted(shared_ips),
+                "shared_addrs": sorted(shared_addrs),
+            }
+        )
+    return query_graph_payload("borrower", nodes, edges)
+
+
+def query_graph_payload(graph_type: str, node_ids: list[str], edges: list[dict[str, Any]]) -> dict[str, Any]:
+    edge_nodes = {edge["source"] for edge in edges} | {edge["target"] for edge in edges}
+    nodes = [
+        {"id": node_id, "label": mask_phone(node_id) if graph_type in {"agent", "borrower"} else node_id}
+        for node_id in node_ids
+    ]
+    return {
+        "type": graph_type,
+        "nodes": nodes,
+        "edges": edges,
+        "summary": {
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "isolated_count": sum(1 for node_id in node_ids if node_id not in edge_nodes),
+        },
+    }
+
+
+def query_graph_too_large(graph_type: str, node_count: int) -> dict[str, Any]:
+    return {
+        "type": graph_type,
+        "nodes": [],
+        "edges": [],
+        "too_many": True,
+        "max_nodes": QUERY_GRAPH_MAX_NODES,
+        "summary": {"node_count": node_count, "edge_count": 0, "isolated_count": 0},
+    }
+
+
+def summary_from_feature_table(feature_table: dict[str, Any]) -> dict[str, Any]:
+    columns = feature_table.get("columns") or []
+    rows = feature_table.get("rows") or []
+    if "社区id(Agent)" not in columns:
+        return {}
+
+    community_ids: set[str] = set()
+    max_community_agents = 0
+    has_size_column = "社区规模(Agent)" in columns
+    for row in rows:
+        community_id = normalize_value(row.get("社区id(Agent)"))
+        if not community_id:
+            continue
+        community_ids.add(community_id)
+        if has_size_column:
+            try:
+                size = int(float(normalize_value(row.get("社区规模(Agent)")) or 0))
+            except ValueError:
+                size = 0
+            max_community_agents = max(max_community_agents, size)
+
+    return {
+        "community_count": len(community_ids),
+        "max_community_agents": max_community_agents,
+        "max_community_size": max_community_agents,
+        "community_size_label": "最大团伙中介数",
     }
 
 
@@ -2461,7 +2626,9 @@ class Handler(BaseHTTPRequestHandler):
         dataset_id = uuid.uuid4().hex
         DATASETS[dataset_id] = {"graph": graph, "original_rows": original_rows}
         center_type, center_id = graph.default_center(basis)
+        feature_table = graph.feature_table(basis, community_method)
         summary = graph.summary(basis, community_method)
+        summary.update(summary_from_feature_table(feature_table))
         summary["uploaded_row_count"] = len(original_rows)
         summary["analyzed_row_count"] = len(rows)
         json_response(
@@ -2476,7 +2643,7 @@ class Handler(BaseHTTPRequestHandler):
                 "top_agents": graph.top_agents(),
                 "top_borrowers": graph.top_borrowers(basis),
                 "communities": graph.communities(community_method, basis),
-                "feature_table": graph.feature_table(basis, community_method),
+                "feature_table": feature_table,
                 "graph": graph.graph(center_type, center_id, basis) if center_id else {"nodes": [], "edges": [], "metrics": {}},
             },
         )

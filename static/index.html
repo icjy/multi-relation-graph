@@ -577,17 +577,43 @@
         <section class="query-section">
           <div class="feature-head">
             <div>
+              <h2>关系图谱</h2>
+              <p id="queryGraphSubtitle">输入多个用户或收货手机号后展示实体之间的共享关系。</p>
+            </div>
+            <div id="queryGraphLegend" class="legend query-graph-legend"></div>
+          </div>
+          <div class="query-graph-edge-filter" aria-label="按源节点和目标节点筛选关系边">
+            <label>
+              源节点
+              <input id="queryGraphSourceInput" type="search" placeholder="输入源节点ID" autocomplete="off" />
+            </label>
+            <label>
+              目标节点
+              <input id="queryGraphTargetInput" type="search" placeholder="输入目标节点ID" autocomplete="off" />
+            </label>
+            <span id="queryGraphEdgeFilterStatus">清空任一输入框可恢复展示全部关系。</span>
+          </div>
+          <div id="queryRelationGraph" class="query-relation-graph empty">暂无关系图谱</div>
+        </section>
+
+        <section class="query-section">
+          <div class="feature-head">
+            <div>
               <h2>命中明细表</h2>
               <p id="queryTableSubtitle">展示上传文件原始列对应的命中行。</p>
             </div>
-            <label class="page-size-label">
-              每页
-              <select id="queryPageSize">
-                <option value="20">20</option>
-                <option value="50">50</option>
-                <option value="100">100</option>
-              </select>
-            </label>
+            <div class="query-table-actions">
+              <button id="exportQueryCsv" class="secondary" type="button">导出 CSV</button>
+              <button id="exportQueryExcel" class="secondary" type="button">导出 Excel</button>
+              <label class="page-size-label">
+                每页
+                <select id="queryPageSize">
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </label>
+            </div>
           </div>
           <div id="queryResultTable" class="feature-table empty">暂无查询</div>
           <div id="queryPagination" class="pagination"></div>

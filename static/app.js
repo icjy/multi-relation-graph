@@ -37,6 +37,10 @@ const state = {
   },
 };
 const graphHiddenTypes = new Set();
+const queryGraphHiddenRelations = new Set();
+const queryGraphEdgeFilter = { source: "", target: "" };
+const queryGraphTableFilter = { source: "", target: "" };
+let currentQueryGraph = null;
 
 const fileInput = document.querySelector("#fileInput");
 const dropZone = document.querySelector("#dropZone");
@@ -73,6 +77,11 @@ const queryAddrValues = document.querySelector("#queryAddrValues");
 const runComplexQueryButton = document.querySelector("#runComplexQuery");
 const clearComplexQueryButton = document.querySelector("#clearComplexQuery");
 const queryPageSize = document.querySelector("#queryPageSize");
+const exportQueryCsv = document.querySelector("#exportQueryCsv");
+const exportQueryExcel = document.querySelector("#exportQueryExcel");
+const queryGraphSourceInput = document.querySelector("#queryGraphSourceInput");
+const queryGraphTargetInput = document.querySelector("#queryGraphTargetInput");
+const queryGraphEdgeFilterStatus = document.querySelector("#queryGraphEdgeFilterStatus");
 const fullClusterFile = document.querySelector("#fullClusterFile");
 const baseClusterFile = document.querySelector("#baseClusterFile");
 const incrementalClusterFile = document.querySelector("#incrementalClusterFile");
@@ -171,6 +180,12 @@ featureCommunityFilter?.addEventListener("input", debounce(() => {
 }, 180));
 runComplexQueryButton?.addEventListener("click", runComplexQuery);
 clearComplexQueryButton?.addEventListener("click", clearComplexQuery);
+exportQueryCsv?.addEventListener("click", () => exportComplexQueryTable("csv"));
+exportQueryExcel?.addEventListener("click", () => exportComplexQueryTable("xls"));
+queryGraphSourceInput?.addEventListener("input", debounce(updateQueryGraphEdgeFilter, 120));
+queryGraphTargetInput?.addEventListener("input", debounce(updateQueryGraphEdgeFilter, 120));
+queryGraphSourceInput?.addEventListener("keydown", handleQueryGraphEdgeFilterKeydown);
+queryGraphTargetInput?.addEventListener("keydown", handleQueryGraphEdgeFilterKeydown);
 fullClusterFile?.addEventListener("change", () => updateFileStatus(fullClusterFile, fullClusterFileStatus, "未选择文件"));
 baseClusterFile?.addEventListener("change", () => updateFileStatus(baseClusterFile, baseClusterFileStatus, "未选择工程文件"));
 incrementalClusterFile?.addEventListener("change", () => updateFileStatus(incrementalClusterFile, incrementalClusterFileStatus, "未选择增量数据"));
@@ -685,6 +700,8 @@ function clearComplexQuery() {
   [queryBorrowerValues, queryAgentValues, queryDeviceValues, queryIpValues, queryAddrValues].forEach((input) => {
     if (input) input.value = "";
   });
+  clearQueryGraphEdgeFilterInputs();
+  clearQueryGraphTableFilter();
   if (queryReloanFilter) queryReloanFilter.value = "all";
   if (queryReturnFilter) queryReturnFilter.value = "all";
   if (queryFinalResultFilter) queryFinalResultFilter.value = "all";
@@ -695,6 +712,7 @@ function clearComplexQuery() {
 function renderComplexQueryResult() {
   const result = state.complexQuery || {};
   renderQuerySummary(result.summary || {});
+  renderQueryRelationGraph(result.relation_graph || {});
   renderQueryHitDetails(result);
   renderQueryResultTable(result);
 }
@@ -762,6 +780,387 @@ function renderQueryHitDetails(result) {
     }).join("");
 }
 
+function renderQueryRelationGraph(graph) {
+  const container = document.querySelector("#queryRelationGraph");
+  const subtitle = document.querySelector("#queryGraphSubtitle");
+  if (!container) return;
+  currentQueryGraph = graph;
+  const nodes = graph.nodes || [];
+  const edges = graph.edges || [];
+  const summary = graph.summary || {};
+  const typeLabel = graph.type === "agent" ? "中介视角" : graph.type === "borrower" ? "用户视角" : "";
+  renderQueryGraphLegend(graph);
+  if (graph.too_many) {
+    container.innerHTML = `命中 ${formatNumber(summary.node_count || 0)} 个节点，超过 ${formatNumber(graph.max_nodes || 80)} 个节点的绘图上限，请缩小输入范围后再生成关系图谱。`;
+    container.classList.add("empty");
+    updateQueryGraphEdgeFilterStatus({ source: "", target: "", edge: null }, graph.type);
+    if (subtitle) subtitle.textContent = `${typeLabel || "关系图谱"}节点过多，暂不绘制。`;
+    return;
+  }
+  if (!nodes.length) {
+    container.innerHTML = "未输入用户或收货手机号，或输入值未命中当前筛选数据。";
+    container.classList.add("empty");
+    updateQueryGraphEdgeFilterStatus({ source: "", target: "", edge: null }, graph.type);
+    if (subtitle) subtitle.textContent = "输入多个用户或收货手机号后展示实体之间的共享关系。";
+    return;
+  }
+  container.classList.remove("empty");
+  const edgeFilter = getQueryGraphEdgeFilterMatch(graph);
+  const visibleEdges = edgeFilter.edge ? [edgeFilter.edge] : queryGraphVisibleEdges(edges, graph.type);
+  const filteredNodeIds = edgeFilter.edge ? new Set([edgeFilter.edge.source, edgeFilter.edge.target]) : null;
+  const visibleNodes = edgeFilter.edge
+    ? nodes.filter((node) => filteredNodeIds.has(node.id))
+    : nodes;
+  const width = Math.max(920, container.clientWidth || 920);
+  const height = 500;
+  const layout = queryGraphLayout(visibleNodes, visibleEdges, width, height);
+  const tableEdges = filterQueryGraphTableEdges(edgeFilter.edge ? [edgeFilter.edge] : edges);
+  const edgeRows = tableEdges.map((edge) => queryGraphEdgeRow(edge, graph.type)).join("");
+  updateQueryGraphEdgeFilterStatus(edgeFilter, graph.type);
+  if (subtitle) {
+    subtitle.textContent = edgeFilter.edge
+      ? `${typeLabel}：已按源节点和目标节点定位 1 条直接关系边。`
+      : `${typeLabel}：${formatNumber(summary.node_count || nodes.length)} 个节点，显示 ${formatNumber(visibleEdges.length)}/${formatNumber(edges.length)} 条边，${formatNumber(summary.isolated_count || 0)} 个孤立点。`;
+  }
+  container.innerHTML = `
+    <div class="query-graph-canvas graph-canvas">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(typeLabel)}关系图谱">
+        <g class="graph-edges query-graph-edges">
+          ${visibleEdges.map((edge) => {
+            const source = layout.get(edge.source);
+            const target = layout.get(edge.target);
+            if (!source || !target) return "";
+            const midX = (source.x + target.x) / 2;
+            const midY = (source.y + target.y) / 2;
+            const meta = queryGraphEdgeMeta(edge, graph.type);
+            return `
+              <line class="graph-edge query-graph-edge" data-source="${escapeHtml(edge.source)}" data-target="${escapeHtml(edge.target)}" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" stroke="${meta.color}" stroke-width="${meta.width}">
+                <title>${escapeHtml(queryGraphEdgeTitle(edge, graph.type))}</title>
+              </line>
+              <text class="graph-edge-label query-graph-edge-label" data-source="${escapeHtml(edge.source)}" data-target="${escapeHtml(edge.target)}" x="${midX}" y="${midY - 7}">${escapeHtml(queryGraphEdgeShortLabel(edge, graph.type, Boolean(edgeFilter.edge)))}</text>
+            `;
+          }).join("")}
+        </g>
+        <g class="graph-nodes query-graph-nodes">
+          ${visibleNodes.map((node) => {
+            const point = layout.get(node.id);
+            if (!point) return "";
+            return queryGraphNodeSvg(node, point, graph.type);
+          }).join("")}
+        </g>
+      </svg>
+    </div>
+    <div class="query-graph-table">
+      <table>
+        <thead>
+          <tr>
+            <th>源节点</th>
+            <th>目标节点</th>
+            <th>${graph.type === "agent" ? "共享User" : "共享Agent"}</th>
+            <th>共享Device</th>
+            <th>共享IP</th>
+            <th>共享Addr</th>
+            <th class="query-graph-detail-filter-head">
+              <div class="query-graph-detail-filter">
+                <span class="query-graph-detail-title">共享值明细</span>
+                <label>
+                  源节点
+                  <input class="query-graph-table-filter-input" data-filter-field="source" type="search" value="${escapeHtml(queryGraphTableFilter.source)}" autocomplete="off" />
+                </label>
+                <label>
+                  目标节点
+                  <input class="query-graph-table-filter-input" data-filter-field="target" type="search" value="${escapeHtml(queryGraphTableFilter.target)}" autocomplete="off" />
+                </label>
+              </div>
+            </th>
+          </tr>
+        </thead>
+        <tbody>${edgeRows || `<tr><td colspan="7">暂无边关系</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+  bindGraphViewport(container.querySelector("svg"), width, height);
+  container.querySelector("svg")?.addEventListener("click", () => clearGraphHighlight(container));
+  container.querySelectorAll(".graph-node").forEach((group) => {
+    group.addEventListener("click", (event) => {
+      event.stopPropagation();
+      highlightNeighborhood(container, group.dataset.nodeId);
+    });
+  });
+  container.querySelectorAll(".query-graph-edge, .query-graph-edge-label").forEach((item) => {
+    item.addEventListener("click", (event) => {
+      event.stopPropagation();
+      highlightSingleEdge(container, item.dataset.source, item.dataset.target);
+    });
+  });
+  container.querySelectorAll(".query-graph-table-filter-input").forEach((input) => {
+    input.addEventListener("input", debounce(() => {
+      const field = input.dataset.filterField;
+      if (field === "source" || field === "target") {
+        queryGraphTableFilter[field] = input.value.trim();
+        renderQueryRelationGraph(graph);
+      }
+    }, 120));
+  });
+}
+
+function renderQueryGraphLegend(graph) {
+  const legend = document.querySelector("#queryGraphLegend");
+  if (!legend) return;
+  const type = graph?.type || "";
+  if (!type || graph?.too_many || !(graph.nodes || []).length) {
+    legend.innerHTML = "";
+    return;
+  }
+  const primaryLabel = type === "agent" ? "共享User" : "共享Agent";
+  const items = [
+    ["primary", type === "agent" ? "borrower-dot" : "agent-dot", primaryLabel],
+    ["device", "device-dot", "共享设备"],
+    ["ip", "ip-dot", "共享IP"],
+    ["addr", "address-dot", "共享地址簇"],
+    ["isolated", "overdue-dot", "孤立点"],
+  ];
+  legend.innerHTML = items.map(([relation, dot, label]) => `
+    <button class="legend-toggle ${queryGraphLegendButtonClass(relation)}" type="button" data-relation="${relation}" aria-pressed="${queryGraphLegendPressed(relation)}">
+      <i class="${dot}"></i>${label}
+    </button>
+  `).join("");
+  legend.querySelectorAll(".legend-toggle").forEach((button) => {
+    button.addEventListener("click", () => {
+      const relation = button.dataset.relation;
+      if (queryGraphHiddenRelations.has(relation)) queryGraphHiddenRelations.delete(relation);
+      else queryGraphHiddenRelations.add(relation);
+      if (currentQueryGraph) renderQueryRelationGraph(currentQueryGraph);
+    });
+  });
+}
+
+function queryGraphLegendButtonClass(relation) {
+  return queryGraphHiddenRelations.has(relation) ? "is-off" : "";
+}
+
+function queryGraphLegendPressed(relation) {
+  return String(!queryGraphHiddenRelations.has(relation));
+}
+
+function queryGraphVisibleEdges(edges, graphType) {
+  return edges.filter((edge) => {
+    return queryGraphVisibleRelationEntries(edge, graphType).length > 0;
+  });
+}
+
+function filterQueryGraphTableEdges(edges) {
+  const source = queryGraphTableFilter.source.trim();
+  const target = queryGraphTableFilter.target.trim();
+  if (!source && !target) return edges;
+  return edges.filter((edge) => {
+    const edgeSource = String(edge.source || "");
+    const edgeTarget = String(edge.target || "");
+    if (source && target) {
+      const sameDirection = edgeSource.includes(source) && edgeTarget.includes(target);
+      const reverseDirection = edgeSource.includes(target) && edgeTarget.includes(source);
+      return sameDirection || reverseDirection;
+    }
+    if (source) return edgeSource.includes(source);
+    return edgeTarget.includes(target);
+  });
+}
+
+function clearQueryGraphTableFilter() {
+  queryGraphTableFilter.source = "";
+  queryGraphTableFilter.target = "";
+}
+
+function updateQueryGraphEdgeFilter() {
+  queryGraphEdgeFilter.source = (queryGraphSourceInput?.value || "").trim();
+  queryGraphEdgeFilter.target = (queryGraphTargetInput?.value || "").trim();
+  if (currentQueryGraph) renderQueryRelationGraph(currentQueryGraph);
+}
+
+function handleQueryGraphEdgeFilterKeydown(event) {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  updateQueryGraphEdgeFilter();
+}
+
+function clearQueryGraphEdgeFilterInputs() {
+  queryGraphEdgeFilter.source = "";
+  queryGraphEdgeFilter.target = "";
+  if (queryGraphSourceInput) queryGraphSourceInput.value = "";
+  if (queryGraphTargetInput) queryGraphTargetInput.value = "";
+  updateQueryGraphEdgeFilterStatus({ source: "", target: "", edge: null }, "");
+}
+
+function getQueryGraphEdgeFilterMatch(graph) {
+  const source = queryGraphEdgeFilter.source;
+  const target = queryGraphEdgeFilter.target;
+  if (!source || !target) return { source, target, edge: null };
+  const edge = findUndirectedEdge(graph?.edges || [], source, target);
+  return { source, target, edge };
+}
+
+function findUndirectedEdge(edges, source, target) {
+  return edges.find((edge) => {
+    const sameDirection = String(edge.source) === source && String(edge.target) === target;
+    const reverseDirection = String(edge.source) === target && String(edge.target) === source;
+    return sameDirection || reverseDirection;
+  }) || null;
+}
+
+function updateQueryGraphEdgeFilterStatus(edgeFilter, graphType) {
+  if (!queryGraphEdgeFilterStatus) return;
+  if (!edgeFilter?.source && !edgeFilter?.target) {
+    queryGraphEdgeFilterStatus.textContent = "清空任一输入框可恢复展示全部关系。";
+    queryGraphEdgeFilterStatus.classList.remove("is-warning", "is-success");
+    return;
+  }
+  if (!edgeFilter.source || !edgeFilter.target) {
+    queryGraphEdgeFilterStatus.textContent = "请同时输入源节点和目标节点；清空任一输入框恢复全部关系。";
+    queryGraphEdgeFilterStatus.classList.remove("is-warning", "is-success");
+    return;
+  }
+  if (!edgeFilter.edge) {
+    queryGraphEdgeFilterStatus.textContent = "未找到这两个节点之间的直接边，当前仍展示全部关系。";
+    queryGraphEdgeFilterStatus.classList.add("is-warning");
+    queryGraphEdgeFilterStatus.classList.remove("is-success");
+    return;
+  }
+  queryGraphEdgeFilterStatus.textContent = `已定位：${queryGraphEdgeShortLabel(edgeFilter.edge, graphType) || "直接关系边"}。`;
+  queryGraphEdgeFilterStatus.classList.add("is-success");
+  queryGraphEdgeFilterStatus.classList.remove("is-warning");
+}
+
+function queryGraphRelationCount(edge, graphType, relation) {
+  if (relation === "primary") return Number((graphType === "agent" ? edge.shared_user_count : edge.shared_agent_count) || 0);
+  if (relation === "device") return Number(edge.shared_device_count || 0);
+  if (relation === "ip") return Number(edge.shared_ip_count || 0);
+  if (relation === "addr") return Number(edge.shared_addr_count || 0);
+  return 0;
+}
+
+function queryGraphVisibleRelationEntries(edge, graphType, includeHidden = false) {
+  const primaryLabel = graphType === "agent" ? "U" : "A";
+  return [
+    ["primary", primaryLabel, queryGraphRelationCount(edge, graphType, "primary")],
+    ["device", "D", queryGraphRelationCount(edge, graphType, "device")],
+    ["ip", "IP", queryGraphRelationCount(edge, graphType, "ip")],
+    ["addr", "Addr", queryGraphRelationCount(edge, graphType, "addr")],
+  ].filter(([relation, , count]) => Number(count || 0) > 0 && (includeHidden || !queryGraphHiddenRelations.has(relation)));
+}
+
+function queryGraphLayout(nodes, edges, width = 920, height = 500) {
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const radius = Math.min(width, height) * 0.34;
+  const layout = new Map();
+  const degree = new Map(nodes.map((node) => [node.id, 0]));
+  edges.forEach((edge) => {
+    degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
+    degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
+  });
+  const visibleNodes = queryGraphHiddenRelations.has("isolated")
+    ? nodes.filter((node) => (degree.get(node.id) || 0) > 0)
+    : nodes;
+  if (!visibleNodes.length) return layout;
+  if (visibleNodes.length === 1) {
+    layout.set(visibleNodes[0].id, { x: centerX, y: centerY });
+    return layout;
+  }
+  const ordered = [...visibleNodes].sort((left, right) => (degree.get(right.id) || 0) - (degree.get(left.id) || 0) || String(left.id).localeCompare(String(right.id)));
+  ordered.forEach((node, index) => {
+    if (index === 0 && (degree.get(node.id) || 0) > 1) {
+      layout.set(node.id, { x: centerX, y: centerY });
+      return;
+    }
+    const ringIndex = (degree.get(ordered[0].id) || 0) > 1 ? index - 1 : index;
+    const ringCount = (degree.get(ordered[0].id) || 0) > 1 ? Math.max(1, ordered.length - 1) : ordered.length;
+    const angle = -Math.PI / 2 + (ringIndex * 2 * Math.PI) / ringCount;
+    layout.set(node.id, {
+      x: Math.round(centerX + Math.cos(angle) * radius),
+      y: Math.round(centerY + Math.sin(angle) * radius),
+    });
+  });
+  return layout;
+}
+
+function queryGraphNodeSvg(node, point, graphType) {
+  const type = graphType === "agent" ? "agent" : "borrower";
+  const colors = {
+    agent: ["var(--agent)", "var(--agent-soft)"],
+    borrower: ["var(--borrower)", "var(--borrower-soft)"],
+  };
+  const [color, fill] = colors[type];
+  const mark = tailNodeLabel(node.id, 4);
+  return `
+    <g class="graph-node" data-node-id="${escapeHtml(node.id)}" data-type="${type}" data-raw-id="${escapeHtml(node.id)}">
+      <circle cx="${point.x}" cy="${point.y}" r="20" fill="${fill}" stroke="${color}" stroke-width="2.5" />
+      <text x="${point.x}" y="${point.y + 4}" text-anchor="middle" font-size="11" fill="${color}" font-weight="700">${escapeHtml(mark)}</text>
+      <title>${escapeHtml(node.id)}</title>
+    </g>
+  `;
+}
+
+function queryGraphEdgeMeta(edge, graphType) {
+  const primaryCount = Number((graphType === "agent" ? edge.shared_user_count : edge.shared_agent_count) || 0);
+  const deviceCount = Number(edge.shared_device_count || 0);
+  const ipCount = Number(edge.shared_ip_count || 0);
+  const addrCount = Number(edge.shared_addr_count || 0);
+  const score = primaryCount + deviceCount * 1.2 + ipCount * 0.8 + addrCount;
+  if (deviceCount > 0) return { color: "#8b5bb5", width: Math.min(5, 1.4 + score * 0.35) };
+  if (ipCount > 0) return { color: "#c78325", width: Math.min(5, 1.4 + score * 0.35) };
+  if (addrCount > 0) return { color: "#596b78", width: Math.min(5, 1.4 + score * 0.35) };
+  return { color: graphType === "agent" ? "var(--borrower)" : "var(--agent)", width: Math.min(5, 1.4 + score * 0.35) };
+}
+
+function queryGraphEdgeRow(edge, graphType) {
+  const primaryCount = graphType === "agent" ? edge.shared_user_count : edge.shared_agent_count;
+  return `
+    <tr>
+      <td><code>${escapeHtml(edge.source)}</code></td>
+      <td><code>${escapeHtml(edge.target)}</code></td>
+      <td>${formatNumber(primaryCount || 0)}</td>
+      <td>${formatNumber(edge.shared_device_count || 0)}</td>
+      <td>${formatNumber(edge.shared_ip_count || 0)}</td>
+      <td>${formatNumber(edge.shared_addr_count || 0)}</td>
+      <td>${escapeHtml(queryGraphEdgeTitle(edge, graphType))}</td>
+    </tr>
+  `;
+}
+
+function queryGraphEdgeShortLabel(edge, graphType, includeHidden = false) {
+  return queryGraphVisibleRelationEntries(edge, graphType, includeHidden)
+    .map(([, label, count]) => `${label}${count}`)
+    .join(" / ");
+}
+
+function queryGraphEdgeTitle(edge, graphType) {
+  const primaryName = graphType === "agent" ? "共享User" : "共享Agent";
+  const primaryValues = graphType === "agent" ? edge.shared_users : edge.shared_agents;
+  return [
+    `${primaryName}: ${formatSharedValues(primaryValues)}`,
+    `共享Device: ${formatSharedValues(edge.shared_devices)}`,
+    `共享IP: ${formatSharedValues(edge.shared_ips)}`,
+    `共享Addr: ${formatSharedValues(edge.shared_addrs)}`,
+  ].join("；");
+}
+
+function formatSharedValues(values) {
+  const list = values || [];
+  if (!list.length) return "无";
+  return list.slice(0, 8).join("|") + (list.length > 8 ? ` 等${list.length}个` : "");
+}
+
+function shortNodeLabel(value) {
+  const text = String(value || "");
+  if (text.length <= 8) return text;
+  return text.slice(-6);
+}
+
+function tailNodeLabel(value, length = 4) {
+  const text = String(value || "");
+  return text.slice(-length) || "-";
+}
+
 function renderQueryResultTable(result) {
   const container = document.querySelector("#queryResultTable");
   const pagination = document.querySelector("#queryPagination");
@@ -811,6 +1210,15 @@ function renderQueryResultTable(result) {
     state.complexQuery.page = targetPage;
     renderQueryResultTable(state.complexQuery);
   });
+}
+
+function exportComplexQueryTable(format) {
+  const { columns, rows } = state.complexQuery || {};
+  if (!columns?.length || !rows?.length) {
+    showToast("暂无可导出的命中明细");
+    return;
+  }
+  exportRows(`complex_query_detail_${timestamp()}`, columns, rows, format);
 }
 
 async function runFullCluster() {
@@ -1318,7 +1726,7 @@ function renderLegendControls() {
 
 function highlightNeighborhood(container, nodeId) {
   const linked = new Set([nodeId]);
-  container.querySelectorAll(".graph-edge").forEach((edge) => {
+  container.querySelectorAll(".graph-edge, .graph-edge-label").forEach((edge) => {
     if (edge.dataset.source === nodeId || edge.dataset.target === nodeId) {
       linked.add(edge.dataset.source);
       linked.add(edge.dataset.target);
@@ -1332,6 +1740,22 @@ function highlightNeighborhood(container, nodeId) {
   container.querySelectorAll(".graph-node").forEach((node) => {
     node.classList.toggle("is-highlighted", linked.has(node.dataset.nodeId));
     node.classList.toggle("is-muted", !linked.has(node.dataset.nodeId));
+  });
+}
+
+function highlightSingleEdge(container, sourceId, targetId) {
+  const endpoints = new Set([sourceId, targetId]);
+  container.querySelectorAll(".graph-node").forEach((node) => {
+    const isEndpoint = endpoints.has(node.dataset.nodeId);
+    node.classList.toggle("is-highlighted", isEndpoint);
+    node.classList.toggle("is-muted", !isEndpoint);
+  });
+  container.querySelectorAll(".graph-edge, .graph-edge-label").forEach((edge) => {
+    const sameDirection = edge.dataset.source === sourceId && edge.dataset.target === targetId;
+    const reverseDirection = edge.dataset.source === targetId && edge.dataset.target === sourceId;
+    const isSelected = sameDirection || reverseDirection;
+    edge.classList.toggle("is-highlighted", isSelected);
+    edge.classList.toggle("is-muted", !isSelected);
   });
 }
 
